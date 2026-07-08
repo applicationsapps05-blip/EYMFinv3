@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Folio & Compass — Risk Profile & SIP Register</title>
+<meta name="theme-color" content="#10263A">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Folio & Compass">
+<meta name="mobile-web-app-capable" content="yes">
+</head>
+<body style="margin:0;padding:16px;background:#E4DCC5;font-family:sans-serif;">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+.mfapp {
+  --navy: #10263A;
+  --navy-light: #1B3A54;
+  --paper: #F1ECDD;
+  --paper-dark: #E4DCC5;
+  --ink: #1C2B39;
+  --gold: #A97F1F;
+  --teal: #2E6E62;
+  --maroon: #7C2E2E;
+  --line: rgba(28,43,57,0.18);
+  font-family: 'IBM Plex Sans', sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+  border-radius: 10px;
+  overflow: hidden;
+  min-height: 640px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+.mfapp * { box-sizing: border-box; }
+.mfapp .num { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
+
+.mf-header {
+  background: var(--navy);
+  color: var(--paper);
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 3px solid var(--gold);
+}
+.mf-header .brand {
+  font-family: 'Fraunces', serif;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  line-height: 1.3;
+}
+.mf-header .brand .folio {
+  color: var(--gold);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  margin-left: 8px;
+  letter-spacing: 1px;
+}
+.mf-header .tagline { font-size: 10.5px; opacity: 0.65; letter-spacing: 0.4px; text-transform: uppercase; margin-top: 3px; }
+
+.mf-companybar {
+  background: var(--paper-dark);
+  color: var(--ink);
+  padding: 7px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  border-bottom: 1px solid var(--line);
+}
+.mf-companybar .cname { font-weight: 600; letter-spacing: 0.2px; }
+.mf-companybar .arn { font-family: 'IBM Plex Mono', monospace; color: var(--gold); margin-left: 8px; }
+.mf-companybar .contact { font-family: 'IBM Plex Mono', monospace; }
+.mf-companybar .contact a { color: var(--ink); text-decoration: none; }
+
+.mf-body { display: flex; flex: 1; min-height: 0; }
+
+.mf-tabs {
+  width: 168px;
+  background: var(--navy-light);
+  display: flex;
+  flex-direction: column;
+  padding: 14px 0;
+  flex-shrink: 0;
+}
+.mf-tab {
+  color: rgba(241,236,221,0.62);
+  padding: 13px 20px;
+  font-size: 12.5px;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.mf-tab .idx { font-family: 'IBM Plex Mono', monospace; opacity: 0.6; font-size: 11px; }
+.mf-tab:hover { color: var(--paper); background: rgba(255,255,255,0.04); }
+.mf-tab.active { color: var(--paper); border-left-color: var(--gold); background: rgba(255,255,255,0.06); font-weight: 500; }
+
+.mf-content { flex: 1; overflow-y: auto; padding: 26px 30px; min-width: 0; }
+.mf-content h2 {
+  font-family: 'Fraunces', serif;
+  font-size: 19px;
+  margin: 0 0 4px 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.mf-sub { font-size: 12.5px; color: rgba(28,43,57,0.6); margin-bottom: 20px; }
+
+.mf-card {
+  background: rgba(255,255,255,0.55);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}
+
+.mf-q {
+  margin-bottom: 18px;
+  background: rgba(169,127,31,0.09);
+  border: 1px solid rgba(169,127,31,0.35);
+  border-left: 4px solid var(--gold);
+  border-radius: 6px;
+  padding: 18px 20px;
+}
+.mf-q label.qtext { display: block; font-size: 14.5px; font-weight: 700; color: var(--navy); margin-bottom: 10px; }
+.mf-q .opts { display: flex; flex-direction: column; gap: 6px; }
+.mf-opt {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12.8px; padding: 6px 10px; border-radius: 4px;
+  border: 1px solid transparent; cursor: pointer;
+}
+.mf-opt:hover { background: rgba(169,127,31,0.08); }
+.mf-opt.sel { background: rgba(169,127,31,0.16); border-color: var(--gold); }
+.mf-opt input { accent-color: var(--gold); }
+
+.mf-btn {
+  background: var(--navy); color: var(--paper); border: none;
+  padding: 10px 18px; border-radius: 5px; font-size: 12.5px; font-weight: 500;
+  cursor: pointer; letter-spacing: 0.3px;
+}
+.mf-btn:hover { background: var(--navy-light); }
+.mf-btn.gold { background: var(--gold); color: var(--navy); }
+.mf-btn.ghost { background: transparent; color: var(--navy); border: 1px solid var(--line); }
+.mf-btn.sm { padding: 6px 12px; font-size: 11.5px; }
+.mf-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.mf-row { display: flex; gap: 12px; flex-wrap: wrap; }
+.mf-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.mf-field label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: rgba(28,43,57,0.55); }
+.mf-field input, .mf-field select {
+  font-family: inherit; font-size: 13px; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 4px; background: #fff;
+  color: var(--ink);
+}
+.mf-field input:focus, .mf-field select:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
+
+.fund-results {
+  position: absolute; top: 100%; left: 0; right: 0; z-index: 20;
+  background: #fff; border: 1px solid var(--line); border-top: none;
+  border-radius: 0 0 5px 5px; max-height: 220px; overflow-y: auto;
+  box-shadow: 0 6px 14px rgba(0,0,0,0.12); display: none;
+}
+.fund-results.show { display: block; }
+.fund-result-item {
+  padding: 8px 12px; font-size: 12.5px; cursor: pointer;
+  border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 8px;
+}
+.fund-result-item:last-child { border-bottom: none; }
+.fund-result-item:hover { background: rgba(169,127,31,0.1); }
+.fund-result-item .fr-nav { font-family: 'IBM Plex Mono', monospace; color: rgba(28,43,57,0.6); flex-shrink: 0; }
+.fund-result-empty { padding: 10px 12px; font-size: 12px; color: rgba(28,43,57,0.5); }
+
+table.mf-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.mf-table th {
+  text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.4px;
+  color: rgba(28,43,57,0.55); border-bottom: 2px solid var(--ink); padding: 8px 8px;
+}
+table.mf-table td { padding: 9px 8px; border-bottom: 1px solid var(--line); }
+table.mf-table tr:hover td { background: rgba(169,127,31,0.06); }
+.pill {
+  font-size: 10px; padding: 2px 8px; border-radius: 20px; font-weight: 500;
+  display: inline-block; letter-spacing: 0.3px;
+}
+.pill.equity { background: rgba(124,46,46,0.12); color: var(--maroon); }
+.pill.debt { background: rgba(46,110,98,0.12); color: var(--teal); }
+.pill.hybrid { background: rgba(169,127,31,0.15); color: var(--gold); }
+.pill.other { background: rgba(28,43,57,0.1); color: var(--ink); }
+
+.mf-empty { text-align: center; padding: 40px 20px; color: rgba(28,43,57,0.5); font-size: 13px; }
+.mf-empty .big { font-family: 'Fraunces', serif; font-size: 30px; color: var(--gold); margin-bottom: 6px; }
+
+.gauge-wrap { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
+.gauge-result { flex: 1; min-width: 220px; }
+.gauge-result .cat {
+  font-family: 'Fraunces', serif; font-size: 24px; font-weight: 600; margin-bottom: 4px;
+}
+.gauge-result .desc { font-size: 12.5px; line-height: 1.5; color: rgba(28,43,57,0.75); }
+.alloc-bar { display: flex; height: 22px; border-radius: 4px; overflow: hidden; margin: 10px 0; border: 1px solid var(--line); }
+.alloc-bar span { display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff; font-weight: 500; }
+
+.notice {
+  border-left: 3px solid var(--gold); background: rgba(169,127,31,0.08);
+  padding: 10px 14px; font-size: 12px; border-radius: 0 4px 4px 0; margin-bottom: 16px; line-height: 1.5;
+}
+.notice.warn { border-left-color: var(--maroon); background: rgba(124,46,46,0.06); }
+.notice strong { display: block; margin-bottom: 3px; }
+
+.remind-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 14px; border: 1px solid var(--line); border-radius: 5px; margin-bottom: 8px; background: rgba(255,255,255,0.5);
+}
+.remind-item .due-badge {
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px; padding: 3px 9px; border-radius: 3px;
+  background: var(--navy); color: var(--paper);
+}
+.remind-item .due-badge.today { background: var(--maroon); }
+.remind-item .due-badge.soon { background: var(--gold); color: var(--navy); }
+
+.toast {
+  position: fixed; bottom: 16px; right: 16px; background: var(--navy); color: var(--paper);
+  padding: 10px 16px; border-radius: 5px; font-size: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  opacity: 0; transform: translateY(8px); transition: all 0.25s; pointer-events: none; z-index: 50;
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+
+@media print {
+  body * { visibility: hidden; }
+  #mf-print-area, #mf-print-area * { visibility: visible; }
+  #mf-print-area { position: absolute; top: 0; left: 0; width: 100%; }
+}
+
+@media (max-width: 640px) {
+  .mf-body { flex-direction: column; }
+  .mf-tabs { width: 100%; flex-direction: row; overflow-x: auto; padding: 8px; }
+  .mf-tab { border-left: none; border-bottom: 3px solid transparent; white-space: nowrap; }
+  .mf-tab.active { border-left-color: transparent; border-bottom-color: var(--gold); }
+}
+</style>
+
+<div id="mfAuthScreen" class="mfapp" style="display:flex;align-items:center;justify-content:center;min-height:640px">
+  <div style="max-width:340px;width:100%;padding:30px">
+    <div style="text-align:center;margin-bottom:22px">
+      <div style="font-family:'Fraunces',serif;font-size:20px;color:#10263A;font-weight:600;line-height:1.3">Engineering Your Financial Freedom</div>
+      <div style="font-size:11px;color:#A97F1F;letter-spacing:1px;text-transform:uppercase;margin-top:4px">EYM Financial · ARN-364244</div>
+    </div>
+    <div class="mf-card">
+      <div id="authError" class="notice warn" style="display:none"></div>
+      <div class="mf-field"><label>Email</label><input id="authEmail" type="email" placeholder="you@example.com"></div>
+      <div class="mf-field"><label>Password</label><input id="authPassword" type="password" placeholder="••••••••"></div>
+      <button class="mf-btn gold" id="btnSignIn" style="width:100%;margin-bottom:8px">Sign In</button>
+      <button class="mf-btn ghost" id="btnSignUp" style="width:100%">Create Account</button>
+    </div>
+    <div style="text-align:center;font-size:11px;color:rgba(28,43,57,0.5);margin-top:10px">Contact us: 7292078936</div>
+  </div>
+</div>
+
+<div class="mfapp" id="mfapp" style="display:none">
+  <div class="mf-header">
+    <div>
+      <div class="brand">Engineering Your Financial Freedom <span class="folio" id="folioNo">FOLIO — NEW</span></div>
+      <div class="tagline">Folio &amp; Compass — Investor Risk Profiling &amp; SIP Register</div>
+    </div>
+    <button class="mf-btn ghost sm" id="btnLogout" style="color:#F1ECDD;border-color:rgba(241,236,221,0.3)">Log out</button>
+  </div>
+  <div class="mf-companybar">
+    <div><span class="cname">EYM Financial</span><span class="arn">ARN-364244</span></div>
+    <div class="contact">Contact us: <a href="tel:7292078936">7292078936</a></div>
+  </div>
+  <div class="mf-body">
+    <div class="mf-tabs" id="mfTabs">
+      <div class="mf-tab active" data-tab="risk"><span class="idx">01</span> Risk Profile</div>
+      <div class="mf-tab" data-tab="sip"><span class="idx">02</span> SIP Register</div>
+      <div class="mf-tab" data-tab="reports"><span class="idx">03</span> Reports &amp; Export</div>
+      <div class="mf-tab" data-tab="reminders"><span class="idx">04</span> Reminders</div>
+      <div class="mf-tab" data-tab="advisor" id="advisorTabBtn" style="display:none"><span class="idx">05</span> Advisor Dashboard</div>
+    </div>
+    <div class="mf-content" id="mfContent"></div>
+  </div>
+</div>
+<div class="toast" id="mfToast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+(function(){
+
+// ====== FILL THIS IN: paste the Web App URL you get from deploying the Apps Script (see SHEETS_SETUP.md) ======
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxcTrQJdBZfZqDtV8FJl_X3_dkeY5kSQCHRxmhYlKN8Vwq36BD6GxVGIrp3J_A12SIAsA/exec";
+// ==================================================================================================
+
+// Thin client for the Google Sheets backend. Every call POSTs JSON to the Apps Script Web App,
+// which reads/writes a "Users" and "Clients" tab in your Google Sheet.
+async function api(action, payload){
+  const res = await fetch(APPS_SCRIPT_URL, {
+    method: 'POST',
+    body: JSON.stringify({ action, ...payload })
+  });
+  const json = await res.json();
+  if(!json.ok) throw new Error(json.error || 'Request failed');
+  return json;
+}
+
+let currentUser = null; // { email, password, isAdvisor }
+let isAdvisor = false;
+
+
+// ---------- Data layer (Google Sheet, one row per signed-in user in the "Clients" tab) ----------
+const DEFAULT_INVESTOR = { name:'', email:'', phone:'', pan:'', dob:'' };
+let state = {
+  investor: {...DEFAULT_INVESTOR},
+  riskAssessment: null,
+  sips: [],
+  activeTab: 'risk',
+  draftAnswers: {}
+};
+
+async function load(){
+  if(!currentUser) return;
+  try {
+    const res = await api('loadData', { email: currentUser.email, password: currentUser.password });
+    if(res.data){
+      state.investor = { ...DEFAULT_INVESTOR, ...res.data.investor, email: currentUser.email };
+      state.riskAssessment = res.data.riskAssessment || null;
+      state.sips = res.data.sips || [];
+    } else {
+      state.investor = { ...DEFAULT_INVESTOR, email: currentUser.email };
+    }
+  } catch(e){ toast('Could not load your data — check your Apps Script URL / deployment'); }
+  render();
+}
+async function persist(){
+  if(!currentUser) return;
+  try {
+    await api('saveData', {
+      email: currentUser.email, password: currentUser.password,
+      investor: state.investor, riskAssessment: state.riskAssessment, sips: state.sips
+    });
+  } catch(e){ toast('Save failed — check your connection'); }
+}
+async function saveInvestor(){ await persist(); }
+async function saveRisk(){ await persist(); }
+async function saveSips(){ await persist(); }
+
+
+function toast(msg){
+  const t = document.getElementById('mfToast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 2400);
+}
+
+// ---------- Risk questionnaire (industry-standard suitability factors used by AMFI-registered
+// distributors / SEBI-registered investment advisers under IA Regulations, 2013 — not a single
+// prescribed AMFI form) ----------
+const QUESTIONS = [
+  { q:"Your age bracket", opts:[["Above 60 yrs",1],["51–60 yrs",2],["41–50 yrs",3],["31–40 yrs",4],["Below 30 yrs",5]] },
+  { q:"Investment time horizon for this money", opts:[["Under 1 year",1],["1–3 years",2],["3–5 years",3],["5–10 years",4],["10+ years",5]] },
+  { q:"Stability of your income / cash flow", opts:[["Irregular / no income",1],["Somewhat variable",2],["Stable, single source",3],["Stable, diversified",4],["High &amp; growing",5]] },
+  { q:"Experience with market-linked investments (equity, mutual funds)", opts:[["None",1],["Less than 1 year",2],["1–3 years",3],["3–5 years",4],["5+ years",5]] },
+  { q:"If your portfolio fell 20% in a few months, you would...", opts:[["Sell everything immediately",1],["Sell a portion",2],["Hold and wait",3],["Stay invested, review later",4],["Invest more at lower prices",5]] },
+  { q:"Primary goal for this investment", opts:[["Capital protection",1],["Regular income",2],["Balanced growth &amp; safety",3],["Long-term wealth creation",4],["Aggressive wealth maximisation",5]] },
+  { q:"Share of total savings going into this investment", opts:[["Over 75%",1],["50–75%",2],["25–50%",3],["10–25%",4],["Under 10%",5]] },
+  { q:"Number of financial dependents", opts:[["4 or more",1],["3",2],["2",3],["1",4],["None",5]] },
+  { q:"Emergency fund coverage (liquid savings for expenses)", opts:[["None",1],["Under 3 months",2],["3–6 months",3],["6–12 months",4],["12+ months",5]] },
+  { q:"Which trade-off best describes your comfort", opts:[["Lowest risk, accept lowest return",1],["Mostly stable, small growth",2],["Balanced risk and return",3],["Higher risk for higher growth",4],["Maximum growth, high volatility accepted",5]] },
+];
+
+function scoreToCategory(score){
+  if(score <= 18) return { cat:'Conservative', riskometer:'Low to Moderate', color:'var(--teal)',
+    desc:'You prioritise capital protection. Suitable allocation leans heavily to debt and liquid funds with a small equity sleeve for inflation protection.',
+    alloc:[['Debt',70,'var(--teal)'],['Hybrid',20,'var(--gold)'],['Equity',10,'var(--maroon)']] };
+  if(score <= 26) return { cat:'Moderately Conservative', riskometer:'Moderate', color:'var(--teal)',
+    desc:'You can accept limited short-term fluctuation for slightly better long-term returns. A debt-tilted hybrid mix is appropriate.',
+    alloc:[['Debt',55,'var(--teal)'],['Hybrid',25,'var(--gold)'],['Equity',20,'var(--maroon)']] };
+  if(score <= 34) return { cat:'Moderate', riskometer:'Moderately High', color:'var(--gold)',
+    desc:'You are comfortable with a balanced mix of growth and stability, tolerating moderate volatility for better long-term outcomes.',
+    alloc:[['Debt',35,'var(--teal)'],['Hybrid',25,'var(--gold)'],['Equity',40,'var(--maroon)']] };
+  if(score <= 42) return { cat:'Moderately Aggressive', riskometer:'High', color:'var(--maroon)',
+    desc:'You are growth-oriented and can stay invested through drawdowns. An equity-heavy portfolio with a debt cushion fits your profile.',
+    alloc:[['Debt',20,'var(--teal)'],['Hybrid',15,'var(--gold)'],['Equity',65,'var(--maroon)']] };
+  return { cat:'Aggressive', riskometer:'Very High', color:'var(--maroon)',
+    desc:'You seek maximum long-term growth and can withstand large, prolonged drawdowns without changing course.',
+    alloc:[['Debt',5,'var(--teal)'],['Hybrid',15,'var(--gold)'],['Equity',80,'var(--maroon)']] };
+}
+
+// ---------- SIP helpers ----------
+function uid(){ return 's_' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+
+function nextDueDate(sip){
+  const start = new Date(sip.startDate);
+  const today = new Date(); today.setHours(0,0,0,0);
+  if(isNaN(start)) return null;
+  let d = new Date(start);
+  const advance = () => {
+    if(sip.frequency === 'Daily') d.setDate(d.getDate()+1);
+    else if(sip.frequency === 'Weekly') d.setDate(d.getDate()+7);
+    else if(sip.frequency === 'Monthly') d.setMonth(d.getMonth()+1);
+    else if(sip.frequency === 'Quarterly') d.setMonth(d.getMonth()+3);
+  };
+  let guard = 0;
+  while(d < today && guard < 2000){ advance(); guard++; }
+  return d;
+}
+function fmtDate(d){ if(!d) return '—'; return d.toLocaleDateString('en-IN', {day:'2-digit', month:'short', year:'numeric'}); }
+function daysBetween(a,b){ return Math.round((b-a)/(1000*60*60*24)); }
+
+// ---------- Rendering ----------
+function render(){
+  document.getElementById('folioNo').textContent = state.investor.name ? ('FOLIO — ' + state.investor.name.toUpperCase()) : 'FOLIO — NEW';
+  document.getElementById('advisorTabBtn').style.display = isAdvisor ? 'flex' : 'none';
+  document.querySelectorAll('.mf-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === state.activeTab));
+  const c = document.getElementById('mfContent');
+  if(state.activeTab === 'risk') c.innerHTML = renderRisk();
+  else if(state.activeTab === 'sip') c.innerHTML = renderSip();
+  else if(state.activeTab === 'reports') c.innerHTML = renderReports();
+  else if(state.activeTab === 'reminders') c.innerHTML = renderReminders();
+  else if(state.activeTab === 'advisor') { c.innerHTML = `<div class="mf-empty">Loading clients…</div>`; renderAdvisor(); }
+  attachHandlers();
+}
+
+async function renderAdvisor(){
+  const c = document.getElementById('mfContent');
+  let html = `<h2>Advisor Dashboard</h2><div class="mf-sub">All client profiles saved to EYM Financial's Google Sheet.</div>`;
+
+  html += `<div class="mf-card">
+    <h2 style="font-size:14px;margin:0 0 4px">AMFI Fund List</h2>
+    <div class="mf-sub" style="margin-bottom:10px">Pulls the full scheme list from AMFI into the "Funds" tab of your Sheet. Runs automatically once a day, but you can force it here to test the connection.</div>
+    <button class="mf-btn ghost sm" id="btnRefreshFunds">Refresh Fund List Now</button>
+    <div id="fundRefreshStatus" style="margin-top:10px"></div>
+  </div>`;
+
+  try {
+    const res = await api('listClients', { email: currentUser.email, password: currentUser.password });
+    const clients = res.clients || [];
+    if(clients.length === 0){
+      html += `<div class="mf-empty"><div class="big">—</div>No client records yet.</div>`;
+    } else {
+      const rows = clients.map(d => {
+        const r = d.riskScore ? scoreToCategory(Number(d.riskScore)) : null;
+        const monthly = (d.sips||[]).reduce((s,x)=> s + (x.frequency==='Monthly'?Number(x.amount||0):x.frequency==='Weekly'?Number(x.amount||0)*4.33:x.frequency==='Quarterly'?Number(x.amount||0)/3:Number(x.amount||0)*30), 0);
+        return { name: d.name || '(no name)', email: d.email || '—', cat: r ? r.cat : '—', sips: d.sipsCount || 0, monthly: Math.round(monthly) };
+      });
+      html += `<div class="mf-card" style="overflow-x:auto"><table class="mf-table"><thead><tr>
+        <th>Investor</th><th>Email</th><th>Risk Category</th><th>Active SIPs</th><th>Monthly Outflow</th>
+      </tr></thead><tbody>`;
+      rows.forEach(r => {
+        html += `<tr><td>${esc(r.name)}</td><td>${esc(r.email)}</td><td>${esc(r.cat)}</td><td class="num">${r.sips}</td><td class="num">₹${r.monthly.toLocaleString('en-IN')}</td></tr>`;
+      });
+      html += `</tbody></table></div>
+      <div class="notice">This dashboard is read-only for now — pulled live from your Google Sheet's "Clients" tab. Ask me if you'd like drill-down / edit access added per client, or you can simply open the Sheet directly any time.</div>`;
+    }
+  } catch(e){
+    html += `<div class="notice warn"><strong>Couldn't load client list.</strong> ${esc(e.message || '')} Make sure this account is marked TRUE in the "IsAdvisor" column of the Users tab.</div>`;
+  }
+  c.innerHTML = html;
+
+  const btnRefresh = document.getElementById('btnRefreshFunds');
+  if(btnRefresh) btnRefresh.onclick = async () => {
+    const statusBox = document.getElementById('fundRefreshStatus');
+    btnRefresh.disabled = true;
+    statusBox.innerHTML = `<div class="mf-sub" style="margin:0">Fetching AMFI's list — this can take 10–20 seconds…</div>`;
+    try {
+      const res = await api('refreshFunds', {});
+      statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Success.</strong> Loaded ${res.count} schemes into the Funds tab.</div>`;
+    } catch(e){
+      statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message || 'Unknown error')}</div>`;
+    }
+    btnRefresh.disabled = false;
+  };
+}
+
+function renderRisk(){
+  const done = state.riskAssessment;
+  let html = `<h2>Investor Risk Profile Assessment</h2>
+  <div class="mf-sub">Suitability questionnaire aligned with SEBI (Investment Advisers) Regulations, 2013 — factors used by AMFI-registered distributors &amp; RIAs to arrive at a risk category before recommending schemes.</div>`;
+
+  html += `<div class="mf-card"><div class="mf-row">
+    <div class="mf-field" style="flex:2;min-width:200px"><label>Investor name</label><input id="inv-name" value="${esc(state.investor.name)}"></div>
+    <div class="mf-field" style="flex:2;min-width:200px"><label>Email (for reports)</label><input id="inv-email" value="${esc(state.investor.email)}"></div>
+    <div class="mf-field" style="flex:1;min-width:140px"><label>Phone</label><input id="inv-phone" value="${esc(state.investor.phone)}"></div>
+    <div class="mf-field" style="flex:1;min-width:140px"><label>PAN</label><input id="inv-pan" value="${esc(state.investor.pan)}" style="text-transform:uppercase"></div>
+  </div></div>`;
+
+  QUESTIONS.forEach((item, qi) => {
+    const sel = state.draftAnswers[qi];
+    html += `<div class="mf-card mf-q"><label class="qtext">${qi+1}. ${item.q}</label><div class="opts">`;
+    item.opts.forEach(([label,val]) => {
+      html += `<label class="mf-opt ${sel===val?'sel':''}"><input type="radio" name="q${qi}" value="${val}" ${sel===val?'checked':''} data-qi="${qi}"> ${label}</label>`;
+    });
+    html += `</div></div>`;
+  });
+
+  const answered = Object.keys(state.draftAnswers).length;
+  html += `<button class="mf-btn gold" id="btnScore" ${answered<QUESTIONS.length?'disabled':''}>Calculate risk profile (${answered}/${QUESTIONS.length} answered)</button>`;
+
+  if(done){
+    const r = scoreToCategory(done.score);
+    html += `<div class="mf-card" style="margin-top:22px">
+      <div class="gauge-wrap">
+        ${gaugeSvg(done.score)}
+        <div class="gauge-result">
+          <div class="mf-sub" style="margin-bottom:2px">Assessed ${fmtDate(new Date(done.date))} · Score ${done.score}/50</div>
+          <div class="cat" style="color:${r.color}">${r.cat}</div>
+          <div class="desc">${r.desc}</div>
+          <div class="mf-sub" style="margin:10px 0 4px;text-transform:none;letter-spacing:0">Matches schemes on the SEBI Riskometer at: <strong>${r.riskometer}</strong></div>
+          <div class="alloc-bar">${r.alloc.map(([n,p,c])=>`<span style="width:${p}%;background:${c}" title="${n} ${p}%">${p}%</span>`).join('')}</div>
+          <div style="display:flex;gap:14px;font-size:11px;color:rgba(28,43,57,0.6)">
+            ${r.alloc.map(([n,p,c])=>`<span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${c};margin-right:4px"></span>${n}</span>`).join('')}
+          </div>
+        </div>
+      </div>
+      <div class="notice" style="margin-top:14px"><strong>Illustrative allocation, not advice.</strong> This suggested split is a general guide based on your stated risk category. Actual scheme selection should follow each fund's SEBI Riskometer label and your registered adviser's recommendation.</div>
+    </div>`;
+  }
+  return html;
+}
+
+function gaugeSvg(score){
+  const pct = Math.max(0, Math.min(1, (score-10)/40));
+  const angle = -180 + pct*180;
+  const rad = angle * Math.PI/180;
+  const cx=90, cy=95, r=72;
+  const nx = cx + r*0.72*Math.cos(rad), ny = cy + r*0.72*Math.sin(rad);
+  const bands = ['#2E6E62','#5D8A5A','#A97F1F','#B8622F','#7C2E2E'];
+  const segs = bands.map((c,i) => {
+    const a0 = -180 + i*36, a1 = -180 + (i+1)*36;
+    const r0 = a0*Math.PI/180, r1 = a1*Math.PI/180;
+    const x0 = cx + r*Math.cos(r0), y0 = cy + r*Math.sin(r0);
+    const x1 = cx + r*Math.cos(r1), y1 = cy + r*Math.sin(r1);
+    return `<path d="M ${x0} ${y0} A ${r} ${r} 0 0 1 ${x1} ${y1}" stroke="${c}" stroke-width="14" fill="none" stroke-linecap="butt"/>`;
+  }).join('');
+  return `<svg width="180" height="105" viewBox="0 0 180 105" style="flex-shrink:0">
+    ${segs}
+    <line x1="${cx}" y1="${cy}" x2="${nx}" y2="${ny}" stroke="#10263A" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="${cx}" cy="${cy}" r="5" fill="#10263A"/>
+  </svg>`;
+}
+
+function renderSip(){
+  let html = `<h2>SIP Register</h2><div class="mf-sub">Track your systematic investment plans across mutual fund schemes.</div>`;
+  html += `<div class="mf-card">
+    <div class="mf-row">
+      <div class="mf-field" style="flex:2;min-width:220px;position:relative">
+        <label>Mutual fund name <span style="text-transform:none;letter-spacing:0">(search AMFI's live scheme list)</span></label>
+        <input id="sip-fund" autocomplete="off" placeholder="Start typing e.g. Parag Parikh Flexi Cap">
+        <div id="sip-fund-results" class="fund-results"></div>
+      </div>
+      <div class="mf-field" style="min-width:150px"><label>Scheme type</label>
+        <select id="sip-type"><option>Equity</option><option>Debt</option><option>Hybrid</option><option>ELSS</option><option>Index / ETF</option><option>Liquid / Money Market</option></select></div>
+      <div class="mf-field" style="min-width:150px"><label>Sub-category</label><input id="sip-sub" placeholder="e.g. Flexi Cap, Large Cap"></div>
+    </div>
+    <div class="mf-row">
+      <div class="mf-field"><label>Frequency</label>
+        <select id="sip-freq"><option>Monthly</option><option>Weekly</option><option>Daily</option><option>Quarterly</option></select></div>
+      <div class="mf-field"><label>SIP amount (₹)</label><input id="sip-amount" type="number" min="0" placeholder="5000"></div>
+      <div class="mf-field"><label>Start date</label><input id="sip-start" type="date"></div>
+      <div class="mf-field"><label>Present NAV (₹)</label><input id="sip-nav" type="number" min="0" step="0.01" placeholder="Auto-fills when you pick a fund"></div>
+      <div class="mf-field"><label>Units held</label><input id="sip-units" type="number" min="0" step="0.001" placeholder="120.500"></div>
+      <div class="mf-field"><label>Folio number</label><input id="sip-folio" placeholder="1234567/89"></div>
+    </div>
+    <button class="mf-btn gold" id="btnAddSip">Add SIP to register</button>
+  </div>`;
+
+  if(state.sips.length === 0){
+    html += `<div class="mf-empty"><div class="big">—</div>No SIPs recorded yet. Add your first SIP above.</div>`;
+  } else {
+    const totalMonthly = state.sips.reduce((s,x)=> s + (x.frequency==='Monthly'?Number(x.amount||0):x.frequency==='Weekly'?Number(x.amount||0)*4.33:x.frequency==='Quarterly'?Number(x.amount||0)/3:Number(x.amount||0)*30), 0);
+    const totalValue = state.sips.reduce((s,x)=> s + (Number(x.nav||0)*Number(x.units||0)), 0);
+    html += `<div class="mf-row" style="margin-bottom:14px">
+      <div class="mf-card" style="flex:1;min-width:160px"><div class="mf-sub" style="margin:0">Active SIPs</div><div class="num" style="font-size:20px">${state.sips.length}</div></div>
+      <div class="mf-card" style="flex:1;min-width:160px"><div class="mf-sub" style="margin:0">Approx. monthly outflow</div><div class="num" style="font-size:20px">₹${Math.round(totalMonthly).toLocaleString('en-IN')}</div></div>
+      <div class="mf-card" style="flex:1;min-width:160px"><div class="mf-sub" style="margin:0">Current value (NAV × units)</div><div class="num" style="font-size:20px">₹${Math.round(totalValue).toLocaleString('en-IN')}</div></div>
+    </div>`;
+    html += `<div class="mf-card" style="overflow-x:auto"><table class="mf-table"><thead><tr>
+      <th>Fund</th><th>Type</th><th>Frequency</th><th>Amount</th><th>Start</th><th>Present NAV</th><th>Units</th><th>Value</th><th>Folio</th><th></th>
+    </tr></thead><tbody>`;
+    state.sips.forEach(s => {
+      const typeCls = /equity/i.test(s.schemeType)?'equity':/debt|liquid/i.test(s.schemeType)?'debt':/hybrid/i.test(s.schemeType)?'hybrid':'other';
+      const val = (Number(s.nav||0)*Number(s.units||0));
+      html += `<tr>
+        <td>${esc(s.fundName)}${s.subCategory?`<div class="mf-sub" style="margin:0">${esc(s.subCategory)}</div>`:''}</td>
+        <td><span class="pill ${typeCls}">${esc(s.schemeType)}</span></td>
+        <td>${esc(s.frequency)}</td>
+        <td class="num">₹${Number(s.amount||0).toLocaleString('en-IN')}</td>
+        <td class="num">${fmtDate(new Date(s.startDate))}</td>
+        <td class="num">₹${Number(s.nav||0).toFixed(2)}</td>
+        <td class="num">${Number(s.units||0).toFixed(3)}</td>
+        <td class="num">₹${Math.round(val).toLocaleString('en-IN')}</td>
+        <td class="num">${esc(s.folio||'—')}</td>
+        <td><button class="mf-btn ghost sm" data-del="${s.id}">Remove</button></td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>`;
+  }
+  return html;
+}
+
+function renderReports(){
+  let html = `<h2>Reports &amp; Export</h2><div class="mf-sub">Download your SIP register and risk profile, or share a summary.</div>`;
+
+  html += `<div class="notice"><strong>About cloud saving</strong>
+  This in-chat app can't authenticate to your Microsoft account directly, so it can't push files straight into OneDrive on its own. Use the buttons below to download the file, then drop it into your OneDrive-synced folder (or use OneDrive's "Upload" button) — it'll sync automatically. If you want true one-click OneDrive saving, that needs a small companion app registered with Microsoft Graph API; I can help you build that separately if useful.</div>`;
+
+  html += `<div class="mf-row">
+    <div class="mf-card" style="flex:1;min-width:220px">
+      <h2 style="font-size:15px">Excel export</h2>
+      <div class="mf-sub">Full SIP register as .xlsx, one row per SIP.</div>
+      <button class="mf-btn gold" id="btnExportExcel" ${state.sips.length===0?'disabled':''}>Download Excel</button>
+    </div>
+    <div class="mf-card" style="flex:1;min-width:220px">
+      <h2 style="font-size:15px">PDF report</h2>
+      <div class="mf-sub">Printable risk profile + SIP register.</div>
+      <button class="mf-btn gold" id="btnExportPdf">Download / Print PDF</button>
+    </div>
+    <div class="mf-card" style="flex:1;min-width:220px">
+      <h2 style="font-size:15px">Share profile</h2>
+      <div class="mf-sub">Compose an email with the profile summary.</div>
+      <button class="mf-btn gold" id="btnShare" ${!state.investor.email?'disabled':''}>Draft share email</button>
+      ${!state.investor.email?'<div class="mf-sub" style="margin-top:6px">Add investor email on the Risk Profile tab first.</div>':''}
+    </div>
+  </div>`;
+
+  // hidden printable area
+  const r = state.riskAssessment ? scoreToCategory(state.riskAssessment.score) : null;
+  html += `<div id="mf-print-area" style="position:absolute;left:-9999px;top:0;width:700px;background:#fff;color:#111;padding:24px;font-family:Georgia,serif">
+    <div style="font-size:12px;color:#333;margin-bottom:2px"><strong>EYM Financial</strong> &nbsp; ARN-364244 &nbsp; | &nbsp; Contact us: 7292078936</div>
+    <h1 style="font-size:20px;margin-bottom:2px">Investor Profile &amp; SIP Register</h1>
+    <div style="font-size:11px;color:#555;margin-bottom:14px">Generated ${fmtDate(new Date())} · Folio &amp; Compass</div>
+    <table style="width:100%;font-size:12px;margin-bottom:14px">
+      <tr><td><strong>Name:</strong> ${esc(state.investor.name)||'—'}</td><td><strong>Email:</strong> ${esc(state.investor.email)||'—'}</td></tr>
+      <tr><td><strong>Phone:</strong> ${esc(state.investor.phone)||'—'}</td><td><strong>PAN:</strong> ${esc(state.investor.pan)||'—'}</td></tr>
+    </table>
+    ${r ? `<h3 style="font-size:14px;border-bottom:1px solid #ccc;padding-bottom:4px">Risk Profile: ${r.cat} (Score ${state.riskAssessment.score}/50)</h3>
+    <p style="font-size:12px;line-height:1.5">${r.desc}</p>
+    <p style="font-size:12px">Suggested Riskometer band: <strong>${r.riskometer}</strong> | Suggested allocation: ${r.alloc.map(a=>a[0]+' '+a[1]+'%').join(', ')}</p>`
+    : `<p style="font-size:12px;color:#888">Risk profile not yet completed.</p>`}
+    <h3 style="font-size:14px;border-bottom:1px solid #ccc;padding-bottom:4px;margin-top:16px">SIP Register (${state.sips.length})</h3>
+    <table style="width:100%;font-size:11px;border-collapse:collapse">
+      <tr style="border-bottom:1px solid #999">
+        <th style="text-align:left;padding:4px">Fund</th><th style="text-align:left">Type</th><th style="text-align:left">Freq.</th><th style="text-align:right">Amount</th><th style="text-align:left">Start</th><th style="text-align:right">NAV</th><th style="text-align:right">Units</th><th style="text-align:left">Folio</th>
+      </tr>
+      ${state.sips.map(s=>`<tr style="border-bottom:1px solid #ddd">
+        <td style="padding:4px">${esc(s.fundName)}</td><td>${esc(s.schemeType)}</td><td>${esc(s.frequency)}</td>
+        <td style="text-align:right">₹${Number(s.amount||0).toLocaleString('en-IN')}</td><td>${fmtDate(new Date(s.startDate))}</td>
+        <td style="text-align:right">₹${Number(s.nav||0).toFixed(2)}</td><td style="text-align:right">${Number(s.units||0).toFixed(3)}</td><td>${esc(s.folio||'—')}</td>
+      </tr>`).join('')}
+    </table>
+    <p style="font-size:9px;color:#999;margin-top:16px">Illustrative summary generated for personal record-keeping. Not investment advice. Scheme risk should always be confirmed via the fund's official SEBI Riskometer.</p>
+  </div>`;
+
+  return html;
+}
+
+function renderReminders(){
+  let html = `<h2>SIP Reminders</h2><div class="mf-sub">Upcoming due dates, computed from each SIP's start date and frequency.</div>`;
+
+  html += `<div class="notice warn"><strong>About email &amp; push reminders</strong>
+  This app runs inside the chat and closes when you leave, so it can't send you real emails or push notifications on a schedule by itself — that needs a backend with a mail service (or a tool like Power Automate / Google Apps Script) checking due dates daily. What it <em>can</em> do here: show you every upcoming due date below whenever you open this tab, and draft a ready-to-send reminder email for any SIP so you can fire it off in one click.</div>`;
+
+  if(state.sips.length === 0){
+    html += `<div class="mf-empty"><div class="big">—</div>Add SIPs in the register to see reminders.</div>`;
+    return html;
+  }
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const items = state.sips.map(s => ({...s, due: nextDueDate(s)})).filter(s=>s.due).sort((a,b)=>a.due-b.due);
+
+  items.forEach(s => {
+    const diff = daysBetween(today, s.due);
+    let badge = `${fmtDate(s.due)}`, cls = '';
+    if(diff === 0){ badge = 'Due today'; cls = 'today'; }
+    else if(diff <= 3){ badge = `In ${diff} day${diff>1?'s':''}`; cls = 'soon'; }
+    html += `<div class="remind-item">
+      <div>
+        <strong style="font-size:13px">${esc(s.fundName)}</strong>
+        <div class="mf-sub" style="margin:2px 0 0">₹${Number(s.amount||0).toLocaleString('en-IN')} · ${esc(s.frequency)} · next: ${fmtDate(s.due)}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span class="due-badge ${cls}">${badge}</span>
+        <button class="mf-btn ghost sm" data-remind="${s.id}">Draft email</button>
+      </div>
+    </div>`;
+  });
+
+  return html;
+}
+
+function esc(s){ return (s||'').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// ---------- Handlers ----------
+function attachHandlers(){
+  document.querySelectorAll('.mf-tab').forEach(t => t.onclick = () => { state.activeTab = t.dataset.tab; render(); });
+
+  // Risk tab
+  const nameEl = document.getElementById('inv-name');
+  if(nameEl){
+    ['inv-name','inv-email','inv-phone','inv-pan'].forEach(id=>{
+      const map = {'inv-name':'name','inv-email':'email','inv-phone':'phone','inv-pan':'pan'};
+      const el = document.getElementById(id);
+      el.onblur = () => { state.investor[map[id]] = el.value; saveInvestor(); };
+    });
+    document.querySelectorAll('input[type=radio][name^=q]').forEach(r => {
+      r.onchange = () => { state.draftAnswers[r.dataset.qi] = Number(r.value); render(); };
+    });
+    const btnScore = document.getElementById('btnScore');
+    if(btnScore) btnScore.onclick = () => {
+      const score = Object.values(state.draftAnswers).reduce((a,b)=>a+b,0);
+      state.riskAssessment = { score, date: new Date().toISOString() };
+      saveRisk();
+      toast('Risk profile calculated');
+      render();
+    };
+  }
+
+  // SIP tab — fund name autocomplete (searches AMFI's scheme list via the Apps Script proxy)
+  const fundInput = document.getElementById('sip-fund');
+  if(fundInput){
+    const resultsBox = document.getElementById('sip-fund-results');
+    let searchTimer = null;
+    fundInput.oninput = () => {
+      const q = fundInput.value.trim();
+      clearTimeout(searchTimer);
+      if(q.length < 2){ resultsBox.classList.remove('show'); resultsBox.innerHTML=''; return; }
+      searchTimer = setTimeout(async () => {
+        resultsBox.innerHTML = `<div class="fund-result-empty">Searching AMFI…</div>`;
+        resultsBox.classList.add('show');
+        try {
+          const res = await api('searchFunds', { query: q });
+          const funds = res.funds || [];
+          if(funds.length === 0){
+            resultsBox.innerHTML = `<div class="fund-result-empty">No matches. You can still type the name manually.</div>`;
+          } else {
+            resultsBox.innerHTML = funds.map(f =>
+              `<div class="fund-result-item" data-name="${esc(f.name)}" data-nav="${f.nav||''}">
+                <span>${esc(f.name)}</span><span class="fr-nav">${f.nav ? '₹'+Number(f.nav).toFixed(2) : ''}</span>
+              </div>`
+            ).join('');
+            resultsBox.querySelectorAll('.fund-result-item').forEach(item => {
+              item.onclick = () => {
+                fundInput.value = item.dataset.name;
+                if(item.dataset.nav) document.getElementById('sip-nav').value = item.dataset.nav;
+                resultsBox.classList.remove('show'); resultsBox.innerHTML='';
+              };
+            });
+          }
+        } catch(e){
+          resultsBox.innerHTML = `<div class="fund-result-empty">Couldn't reach the fund list (${esc(e.message||'error')}) — you can still type the name manually.</div>`;
+        }
+      }, 350);
+    };
+    document.addEventListener('click', (ev) => {
+      if(!resultsBox.contains(ev.target) && ev.target !== fundInput){
+        resultsBox.classList.remove('show');
+      }
+    });
+  }
+
+  // SIP tab
+  const btnAdd = document.getElementById('btnAddSip');
+  if(btnAdd) btnAdd.onclick = () => {
+    const fund = document.getElementById('sip-fund').value.trim();
+    const start = document.getElementById('sip-start').value;
+    const amount = document.getElementById('sip-amount').value;
+    if(!fund || !start || !amount){ toast('Fund name, start date and amount are required'); return; }
+    state.sips.push({
+      id: uid(),
+      fundName: fund,
+      schemeType: document.getElementById('sip-type').value,
+      subCategory: document.getElementById('sip-sub').value.trim(),
+      frequency: document.getElementById('sip-freq').value,
+      amount: Number(amount),
+      startDate: start,
+      nav: Number(document.getElementById('sip-nav').value || 0),
+      units: Number(document.getElementById('sip-units').value || 0),
+      folio: document.getElementById('sip-folio').value.trim()
+    });
+    saveSips();
+    toast('SIP added to register');
+    render();
+  };
+  document.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+    state.sips = state.sips.filter(s => s.id !== b.dataset.del);
+    saveSips(); render(); toast('SIP removed');
+  });
+
+  // Reports tab
+  const btnXl = document.getElementById('btnExportExcel');
+  if(btnXl) btnXl.onclick = () => {
+    const rows = state.sips.map(s => ({
+      'Fund Name': s.fundName, 'Scheme Type': s.schemeType, 'Sub-Category': s.subCategory,
+      'Frequency': s.frequency, 'SIP Amount (₹)': s.amount, 'Start Date': s.startDate,
+      'Present NAV (₹)': s.nav, 'Units': s.units, 'Current Value (₹)': Math.round(s.nav*s.units),
+      'Folio Number': s.folio
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'SIP Register');
+    XLSX.writeFile(wb, 'SIP_Register.xlsx');
+    toast('Excel file downloaded');
+  };
+  const btnPdf = document.getElementById('btnExportPdf');
+  if(btnPdf) btnPdf.onclick = () => {
+    const area = document.getElementById('mf-print-area');
+    area.style.position = 'static'; area.style.left = '0';
+    window.print();
+    setTimeout(()=>{ area.style.position='absolute'; area.style.left='-9999px'; }, 500);
+  };
+  const btnShare = document.getElementById('btnShare');
+  if(btnShare) btnShare.onclick = () => {
+    const r = state.riskAssessment ? scoreToCategory(state.riskAssessment.score) : null;
+    const subject = encodeURIComponent('Your Mutual Fund Profile Summary');
+    const body = encodeURIComponent(
+`Hello ${state.investor.name || ''},
+
+Here is your investment profile summary:
+
+Risk Category: ${r ? r.cat : 'Not yet assessed'}
+${r ? 'Riskometer band: ' + r.riskometer : ''}
+Active SIPs: ${state.sips.length}
+
+Regards`);
+    window.open(`mailto:${state.investor.email}?subject=${subject}&body=${body}`);
+  };
+
+  // Reminders tab
+  document.querySelectorAll('[data-remind]').forEach(b => b.onclick = () => {
+    const s = state.sips.find(x => x.id === b.dataset.remind);
+    if(!s) return;
+    const due = nextDueDate(s);
+    const subject = encodeURIComponent(`Reminder: SIP due for ${s.fundName}`);
+    const body = encodeURIComponent(`This is a reminder that your ${s.frequency} SIP of ₹${s.amount} for ${s.fundName} is due on ${fmtDate(due)}.`);
+    window.open(`mailto:${state.investor.email || ''}?subject=${subject}&body=${body}`);
+  });
+}
+
+// ---------- Auth wiring ----------
+function showAuthError(msg){
+  const el = document.getElementById('authError');
+  el.textContent = msg; el.style.display = 'block';
+}
+function clearAuthError(){ document.getElementById('authError').style.display = 'none'; }
+
+document.getElementById('btnSignIn').onclick = async () => {
+  clearAuthError();
+  const email = document.getElementById('authEmail').value.trim();
+  const pw = document.getElementById('authPassword').value;
+  if(!email || !pw){ showAuthError('Enter your email and password.'); return; }
+  try {
+    const res = await api('login', { email, password: pw });
+    currentUser = { email, password: pw };
+    isAdvisor = !!res.isAdvisor;
+    sessionStorage.setItem('fc_session', JSON.stringify(currentUser));
+    await enterApp();
+  } catch(e){ showAuthError(e.message); }
+};
+document.getElementById('btnSignUp').onclick = async () => {
+  clearAuthError();
+  const email = document.getElementById('authEmail').value.trim();
+  const pw = document.getElementById('authPassword').value;
+  if(!email || !pw){ showAuthError('Enter an email and password to create an account.'); return; }
+  if(pw.length < 6){ showAuthError('Password must be at least 6 characters.'); return; }
+  try {
+    await api('signup', { email, password: pw });
+    currentUser = { email, password: pw };
+    isAdvisor = false;
+    sessionStorage.setItem('fc_session', JSON.stringify(currentUser));
+    await enterApp();
+  } catch(e){ showAuthError(e.message); }
+};
+document.getElementById('btnLogout').onclick = () => {
+  sessionStorage.removeItem('fc_session');
+  currentUser = null; isAdvisor = false;
+  document.getElementById('mfapp').style.display = 'none';
+  document.getElementById('mfAuthScreen').style.display = 'flex';
+};
+
+async function enterApp(){
+  document.getElementById('mfAuthScreen').style.display = 'none';
+  document.getElementById('mfapp').style.display = 'flex';
+  state.activeTab = 'risk';
+  await load();
+}
+
+// Auto-resume a previous session (stored only for this browser tab)
+(async function resumeSession(){
+  const saved = sessionStorage.getItem('fc_session');
+  if(!saved) return;
+  try {
+    const { email, password } = JSON.parse(saved);
+    const res = await api('login', { email, password });
+    currentUser = { email, password };
+    isAdvisor = !!res.isAdvisor;
+    await enterApp();
+  } catch(e){ sessionStorage.removeItem('fc_session'); }
+})();
+
+})();
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('service-worker.js').catch(()=>{});
+  });
+}
+</script>
+</body>
+</html>
