@@ -6,7 +6,8 @@
  * Expects two tabs in the spreadsheet:
  *   "Users"   columns: Email | PasswordHash | IsAdvisor
  *   "Clients" columns: Email | Name | Phone | PAN | DOB | RiskScore | RiskDate | SIPsJSON | UpdatedAt
- * A third tab, "Funds", is created automatically to cache the AMFI scheme list.
+ * Two more tabs are created automatically:
+ *   "Funds" caches the AMFI scheme list; "TRIGGER SETUP" is not a sheet — see setupDailyReminderTrigger().
  */
 
 function doPost(e) {
@@ -21,6 +22,9 @@ function doPost(e) {
     else if (action === 'listClients') result = listClients(body.email, body.password);
     else if (action === 'searchFunds') result = searchFunds(body.query);
     else if (action === 'refreshFunds') result = refreshFundList();
+    else if (action === 'lookupNavs') result = lookupNavs(body.names || []);
+    else if (action === 'getNews') result = getNews();
+    else if (action === 'setupReminderTrigger') result = setupDailyReminderTrigger();
     else result = { ok: false, error: 'Unknown action' };
   } catch (err) {
     result = { ok: false, error: err.message };
@@ -197,4 +201,153 @@ function listClients(email, password) {
     });
   }
   return { ok: true, clients };
+}
+
+/**
+ * Looks up the latest AMFI NAV for a list of fund names (used by the investor Dashboard).
+ * Refreshes the Funds cache first if it's stale (same 24h rule as searchFunds).
+ */
+function lookupNavs(names) {
+  if (!names || names.length === 0) return { ok: true, navs: {} };
+  if (fundsNeedRefresh()) {
+    const r = refreshFundList();
+    if (!r.ok) return r;
+  }
+  const sheet = getFundsSheet();
+  const data = sheet.getDataRange().getValues();
+  const byName = {};
+  for (let i = 1; i < data.length; i++) {
+    const n = (data[i][1] || '').toString().toLowerCase().trim();
+    if (n) byName[n] = data[i][2];
+  }
+  const navs = {};
+  names.forEach(name => {
+    const key = (name || '').toLowerCase().trim();
+    if (byName.hasOwnProperty(key)) { navs[name] = byName[key]; return; }
+    // fallback: fuzzy substring match if an exact match isn't found
+    const found = Object.keys(byName).find(k => k.indexOf(key) !== -1 || key.indexOf(k) !== -1);
+    navs[name] = found ? byName[found] : null;
+  });
+  return { ok: true, navs };
+}
+
+/**
+ * Pulls top domestic and international business headlines from RSS feeds and caches
+ * the result for 15 minutes (avoids re-fetching every single login while still feeling fresh).
+ * Domestic sources: Economic Times (Markets + Mutual Funds), Zee News Business.
+ * International source: Economic Times World/International.
+ * Add more feeds to DOMESTIC_FEEDS / INTL_FEEDS below as you find reliable RSS URLs
+ * (e.g. a working CNBC-TV18/Awaaz feed) — each is fetched independently, so one
+ * broken URL won't break the others.
+ */
+const DOMESTIC_FEEDS = [
+  { source: 'Economic Times', url: 'https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms' },
+  { source: 'Economic Times MF', url: 'https://economictimes.indiatimes.com/mf/rssfeeds/359241701.cms' },
+  { source: 'Zee Business', url: 'https://zeenews.india.com/rss/business.xml' }
+];
+const INTL_FEEDS = [
+  { source: 'Economic Times World', url: 'https://economictimes.indiatimes.com/news/international/rssfeeds/858478126.cms' }
+];
+
+function getNews() {
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get('fc_news');
+  if (cached) return { ok: true, ...JSON.parse(cached), cached: true };
+
+  const domestic = fetchFeedItems(DOMESTIC_FEEDS).slice(0, 5);
+  const international = fetchFeedItems(INTL_FEEDS).slice(0, 5);
+  const result = { domestic, international };
+  cache.put('fc_news', JSON.stringify(result), 900); // 15 minutes
+  return { ok: true, ...result, cached: false };
+}
+
+function fetchFeedItems(feeds) {
+  const items = [];
+  feeds.forEach(feed => {
+    try {
+      const res = UrlFetchApp.fetch(feed.url, { muteHttpExceptions: true, followRedirects: true });
+      if (res.getResponseCode() !== 200) return;
+      const doc = XmlService.parse(res.getContentText());
+      const root = doc.getRootElement();
+      const channel = root.getChild('channel');
+      if (!channel) return;
+      const rssItems = channel.getChildren('item');
+      rssItems.slice(0, 8).forEach(it => {
+        const title = (it.getChildText('title') || '').trim();
+        const link = (it.getChildText('link') || '').trim();
+        const pubDateRaw = it.getChildText('pubDate') || '';
+        const pubDate = pubDateRaw ? new Date(pubDateRaw) : new Date(0);
+        if (title) items.push({ title, link, source: feed.source, pubDate: pubDate.getTime() });
+      });
+    } catch (e) {
+      // skip this feed silently — one bad source shouldn't break the rest
+    }
+  });
+  items.sort((a, b) => b.pubDate - a.pubDate);
+  return items;
+}
+
+/**
+ * Sends an email to every investor whose next SIP due date is exactly 2 days away.
+ * Not run automatically — call setupDailyReminderTrigger() once to schedule it daily.
+ */
+function sendSipReminders() {
+  const sheet = getClientsSheet();
+  const data = sheet.getDataRange().getValues();
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  let sent = 0;
+  for (let i = 1; i < data.length; i++) {
+    const email = data[i][0];
+    if (!email) continue;
+    const sips = data[i][7] ? JSON.parse(data[i][7]) : [];
+    sips.forEach(sip => {
+      const due = nextDueDateServer(sip);
+      if (!due) return;
+      const diffDays = Math.round((due.getTime() - today.getTime()) / 86400000);
+      if (diffDays === 2) {
+        try {
+          MailApp.sendEmail({
+            to: email,
+            subject: 'SIP due in 2 days — ' + sip.fundName,
+            body:
+              'Hello,\n\nThis is a reminder that your ' + sip.frequency + ' SIP of ₹' + sip.amount +
+              ' for ' + sip.fundName + ' is due on ' + due.toDateString() + '.\n\n' +
+              'Please ensure sufficient balance for the auto-debit.\n\n' +
+              '— EYM Financial · ARN-364244 · Contact us: 7292078936'
+          });
+          sent++;
+        } catch (e) { /* keep going even if one email fails */ }
+      }
+    });
+  }
+  return { ok: true, sent };
+}
+
+function nextDueDateServer(sip) {
+  const start = new Date(sip.startDate);
+  if (isNaN(start)) return null;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  let d = new Date(start);
+  let guard = 0;
+  while (d < today && guard < 3000) {
+    if (sip.frequency === 'Daily') d.setDate(d.getDate() + 1);
+    else if (sip.frequency === 'Weekly') d.setDate(d.getDate() + 7);
+    else if (sip.frequency === 'Monthly') d.setMonth(d.getMonth() + 1);
+    else if (sip.frequency === 'Quarterly') d.setMonth(d.getMonth() + 3);
+    else d.setMonth(d.getMonth() + 1);
+    guard++;
+  }
+  return d;
+}
+
+/**
+ * Run this ONCE (select it in the function dropdown above and click Run) to schedule
+ * sendSipReminders() to run automatically every day. Safe to re-run — it won't create duplicates.
+ */
+function setupDailyReminderTrigger() {
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === 'sendSipReminders') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('sendSipReminders').timeBased().everyDays(1).atHour(8).create();
+  return { ok: true, message: 'Daily SIP reminder emails scheduled for ~8 AM every day.' };
 }
