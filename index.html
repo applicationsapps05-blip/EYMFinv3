@@ -226,6 +226,13 @@ table.mf-table tr:hover td { background: rgba(169,127,31,0.06); }
 .remind-item .due-badge.today { background: var(--maroon); }
 .remind-item .due-badge.soon { background: var(--gold); color: var(--navy); }
 
+.wa-fab {
+  position: fixed; bottom: 18px; left: 18px; width: 52px; height: 52px;
+  background: #25D366; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.25); z-index: 60; text-decoration: none;
+}
+.wa-fab:hover { filter: brightness(1.05); }
+
 .toast {
   position: fixed; bottom: 16px; right: 16px; background: var(--navy); color: var(--paper);
   padding: 10px 16px; border-radius: 5px; font-size: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
@@ -278,15 +285,20 @@ table.mf-table tr:hover td { background: rgba(169,127,31,0.06); }
   </div>
   <div class="mf-body">
     <div class="mf-tabs" id="mfTabs">
-      <div class="mf-tab active" data-tab="risk"><span class="idx">01</span> Risk Profile</div>
-      <div class="mf-tab" data-tab="sip"><span class="idx">02</span> SIP Register</div>
-      <div class="mf-tab" data-tab="reports"><span class="idx">03</span> Reports &amp; Export</div>
-      <div class="mf-tab" data-tab="reminders"><span class="idx">04</span> Reminders</div>
-      <div class="mf-tab" data-tab="advisor" id="advisorTabBtn" style="display:none"><span class="idx">05</span> Advisor Dashboard</div>
+      <div class="mf-tab active" data-tab="dashboard"><span class="idx">01</span> Dashboard</div>
+      <div class="mf-tab" data-tab="risk"><span class="idx">02</span> Risk Profile</div>
+      <div class="mf-tab" data-tab="sip"><span class="idx">03</span> SIP Register</div>
+      <div class="mf-tab" data-tab="reports"><span class="idx">04</span> Reports &amp; Export</div>
+      <div class="mf-tab" data-tab="reminders"><span class="idx">05</span> Reminders</div>
+      <div class="mf-tab" data-tab="news"><span class="idx">06</span> News</div>
+      <div class="mf-tab" data-tab="advisor" id="advisorTabBtn" style="display:none"><span class="idx">07</span> Advisor Dashboard</div>
     </div>
     <div class="mf-content" id="mfContent"></div>
   </div>
 </div>
+<a class="wa-fab" id="waFab" href="https://wa.me/917292078936?text=Hi%20EYM%20Financial%2C%20I%27d%20like%20to%20talk%20about%20my%20investments." target="_blank" rel="noopener" title="Chat with us on WhatsApp">
+  <svg viewBox="0 0 32 32" width="26" height="26" fill="#fff"><path d="M16 3C9.4 3 4 8.4 4 15c0 2.4.7 4.6 1.9 6.5L4 29l7.7-1.9c1.8 1 3.9 1.5 6.3 1.5 6.6 0 12-5.4 12-12S22.6 3 16 3zm0 21.8c-2.1 0-4.1-.6-5.8-1.6l-.4-.2-4.6 1.2 1.2-4.5-.3-.5C4.9 17.9 4.3 16 4.3 15c0-6.5 5.3-11.7 11.7-11.7S27.7 8.5 27.7 15 22.5 24.8 16 24.8zm6.4-8.8c-.3-.2-2-1-2.3-1.1-.3-.1-.5-.2-.7.2-.2.3-.8 1.1-1 1.3-.2.2-.4.3-.7.1-.3-.2-1.4-.5-2.7-1.7-1-.9-1.7-2-1.9-2.3-.2-.3 0-.5.1-.7.1-.1.3-.4.5-.5.2-.2.2-.3.3-.5.1-.2 0-.4 0-.6-.1-.2-.7-1.7-1-2.3-.3-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.4s1 2.8 1.2 3c.1.2 2 3.1 4.9 4.3.7.3 1.2.5 1.6.6.7.2 1.3.2 1.8.1.5-.1 1.7-.7 1.9-1.4.2-.7.2-1.3.2-1.4-.1-.2-.3-.3-.6-.4z"/></svg>
+</a>
 <div class="toast" id="mfToast"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -319,7 +331,7 @@ let state = {
   investor: {...DEFAULT_INVESTOR},
   riskAssessment: null,
   sips: [],
-  activeTab: 'risk',
+  activeTab: 'dashboard',
   draftAnswers: {}
 };
 
@@ -418,10 +430,12 @@ function render(){
   document.getElementById('advisorTabBtn').style.display = isAdvisor ? 'flex' : 'none';
   document.querySelectorAll('.mf-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === state.activeTab));
   const c = document.getElementById('mfContent');
-  if(state.activeTab === 'risk') c.innerHTML = renderRisk();
+  if(state.activeTab === 'dashboard') { c.innerHTML = `<div class="mf-empty">Loading your portfolio…</div>`; renderDashboard(); }
+  else if(state.activeTab === 'risk') c.innerHTML = renderRisk();
   else if(state.activeTab === 'sip') c.innerHTML = renderSip();
   else if(state.activeTab === 'reports') c.innerHTML = renderReports();
   else if(state.activeTab === 'reminders') c.innerHTML = renderReminders();
+  else if(state.activeTab === 'news') { c.innerHTML = `<div class="mf-empty">Loading today's news…</div>`; renderNews(); }
   else if(state.activeTab === 'advisor') { c.innerHTML = `<div class="mf-empty">Loading clients…</div>`; renderAdvisor(); }
   attachHandlers();
 }
@@ -435,6 +449,13 @@ async function renderAdvisor(){
     <div class="mf-sub" style="margin-bottom:10px">Pulls the full scheme list from AMFI into the "Funds" tab of your Sheet. Runs automatically once a day, but you can force it here to test the connection.</div>
     <button class="mf-btn ghost sm" id="btnRefreshFunds">Refresh Fund List Now</button>
     <div id="fundRefreshStatus" style="margin-top:10px"></div>
+  </div>`;
+
+  html += `<div class="mf-card">
+    <h2 style="font-size:14px;margin:0 0 4px">SIP Reminder Emails</h2>
+    <div class="mf-sub" style="margin-bottom:10px">Sends every investor an automatic email 2 days before each SIP is due. Click once to schedule it — it then runs daily on its own, no need to click again.</div>
+    <button class="mf-btn ghost sm" id="btnEnableReminders">Enable Daily Reminder Emails</button>
+    <div id="reminderSetupStatus" style="margin-top:10px"></div>
   </div>`;
 
   try {
@@ -475,6 +496,102 @@ async function renderAdvisor(){
     }
     btnRefresh.disabled = false;
   };
+
+  const btnReminders = document.getElementById('btnEnableReminders');
+  if(btnReminders) btnReminders.onclick = async () => {
+    const statusBox = document.getElementById('reminderSetupStatus');
+    btnReminders.disabled = true;
+    statusBox.innerHTML = `<div class="mf-sub" style="margin:0">Scheduling…</div>`;
+    try {
+      const res = await api('setupReminderTrigger', {});
+      statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Done.</strong> ${esc(res.message || 'Reminders scheduled.')}</div>`;
+    } catch(e){
+      statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message || 'Unknown error')}</div>`;
+    }
+    btnReminders.disabled = false;
+  };
+}
+
+function estimateInvested(sip){
+  if(sip.investedTotal) return Number(sip.investedTotal);
+  const start = new Date(sip.startDate);
+  if(isNaN(start)) return Number(sip.amount||0);
+  const today = new Date();
+  let installments = 1, d = new Date(start);
+  const advance = () => {
+    if(sip.frequency === 'Daily') d.setDate(d.getDate()+1);
+    else if(sip.frequency === 'Weekly') d.setDate(d.getDate()+7);
+    else if(sip.frequency === 'Quarterly') d.setMonth(d.getMonth()+3);
+    else d.setMonth(d.getMonth()+1);
+  };
+  let guard = 0;
+  while(d < today && guard < 3000){ advance(); installments++; guard++; }
+  return Number(sip.amount||0) * installments;
+}
+
+async function renderDashboard(){
+  const c = document.getElementById('mfContent');
+  let html = `<h2>My Portfolio Dashboard</h2><div class="mf-sub">Live performance using the latest AMFI NAV for each scheme you hold.</div>`;
+
+  if(state.sips.length === 0){
+    html += `<div class="mf-empty"><div class="big">—</div>No SIPs yet — add one in the SIP Register to see performance here.</div>`;
+    c.innerHTML = html;
+    return;
+  }
+
+  let navs = {};
+  let fetchError = null;
+  try {
+    const res = await api('lookupNavs', { names: state.sips.map(s => s.fundName) });
+    navs = res.navs || {};
+  } catch(e){ fetchError = e.message; }
+
+  const rows = state.sips.map(s => {
+    const liveNav = navs[s.fundName];
+    const nav = (liveNav !== null && liveNav !== undefined && liveNav !== '') ? Number(liveNav) : Number(s.nav || 0);
+    const currentValue = nav * Number(s.units || 0);
+    const invested = estimateInvested(s);
+    const gain = currentValue - invested;
+    const gainPct = invested > 0 ? (gain / invested * 100) : 0;
+    return { ...s, nav, currentValue, invested, gain, gainPct, navIsLive: liveNav !== null && liveNav !== undefined && liveNav !== '' };
+  });
+
+  const totalInvested = rows.reduce((a,r)=>a+r.invested, 0);
+  const totalValue = rows.reduce((a,r)=>a+r.currentValue, 0);
+  const totalGain = totalValue - totalInvested;
+  const totalGainPct = totalInvested > 0 ? (totalGain/totalInvested*100) : 0;
+  const gainColor = totalGain >= 0 ? 'var(--teal)' : 'var(--maroon)';
+
+  if(fetchError){
+    html += `<div class="notice warn"><strong>Couldn't fetch live NAVs.</strong> ${esc(fetchError)} Showing your last-saved NAV values instead.</div>`;
+  }
+
+  html += `<div class="mf-row" style="margin-bottom:14px">
+    <div class="mf-card" style="flex:1;min-width:150px"><div class="mf-sub" style="margin:0">Total Invested</div><div class="num" style="font-size:19px">₹${Math.round(totalInvested).toLocaleString('en-IN')}</div></div>
+    <div class="mf-card" style="flex:1;min-width:150px"><div class="mf-sub" style="margin:0">Current Value</div><div class="num" style="font-size:19px">₹${Math.round(totalValue).toLocaleString('en-IN')}</div></div>
+    <div class="mf-card" style="flex:1;min-width:150px"><div class="mf-sub" style="margin:0">Gain / Loss</div><div class="num" style="font-size:19px;color:${gainColor}">${totalGain>=0?'+':''}₹${Math.round(totalGain).toLocaleString('en-IN')}</div></div>
+    <div class="mf-card" style="flex:1;min-width:150px"><div class="mf-sub" style="margin:0">Return</div><div class="num" style="font-size:19px;color:${gainColor}">${totalGain>=0?'+':''}${totalGainPct.toFixed(2)}%</div></div>
+  </div>`;
+
+  html += `<div class="mf-card" style="overflow-x:auto"><table class="mf-table"><thead><tr>
+    <th>Fund</th><th>Units</th><th>NAV</th><th>Invested (est.)</th><th>Current Value</th><th>Gain/Loss</th><th>Return</th>
+  </tr></thead><tbody>`;
+  rows.forEach(r => {
+    const rc = r.gain >= 0 ? 'var(--teal)' : 'var(--maroon)';
+    html += `<tr>
+      <td>${esc(r.fundName)}${!r.navIsLive?'<div class="mf-sub" style="margin:0">using last-saved NAV</div>':''}</td>
+      <td class="num">${Number(r.units||0).toFixed(3)}</td>
+      <td class="num">₹${r.nav.toFixed(2)}</td>
+      <td class="num">₹${Math.round(r.invested).toLocaleString('en-IN')}</td>
+      <td class="num">₹${Math.round(r.currentValue).toLocaleString('en-IN')}</td>
+      <td class="num" style="color:${rc}">${r.gain>=0?'+':''}₹${Math.round(r.gain).toLocaleString('en-IN')}</td>
+      <td class="num" style="color:${rc}">${r.gain>=0?'+':''}${r.gainPct.toFixed(2)}%</td>
+    </tr>`;
+  });
+  html += `</tbody></table></div>
+  <div class="notice">"Invested (est.)" uses your entered "Total Invested" if you filled it in on a SIP, otherwise it's estimated from installments × amount since the start date. Enter the exact figure on each SIP in the register for precise numbers.</div>`;
+
+  c.innerHTML = html;
 }
 
 function renderRisk(){
@@ -565,6 +682,7 @@ function renderSip(){
       <div class="mf-field"><label>Present NAV (₹)</label><input id="sip-nav" type="number" min="0" step="0.01" placeholder="Auto-fills when you pick a fund"></div>
       <div class="mf-field"><label>Units held</label><input id="sip-units" type="number" min="0" step="0.001" placeholder="120.500"></div>
       <div class="mf-field"><label>Folio number</label><input id="sip-folio" placeholder="1234567/89"></div>
+      <div class="mf-field"><label>Total invested till date (₹) <span style="text-transform:none;letter-spacing:0">optional</span></label><input id="sip-invested" type="number" min="0" placeholder="Leave blank to auto-estimate"></div>
     </div>
     <button class="mf-btn gold" id="btnAddSip">Add SIP to register</button>
   </div>`;
@@ -693,6 +811,38 @@ function renderReminders(){
   return html;
 }
 
+async function renderNews(){
+  const c = document.getElementById('mfContent');
+  let html = `<h2>Market &amp; Business News</h2><div class="mf-sub">Top 5 domestic and 5 international headlines, refreshed each time you open this tab.</div>`;
+  try {
+    const res = await api('getNews', {});
+    const dom = res.domestic || [];
+    const intl = res.international || [];
+    html += `<div class="mf-row" style="align-items:flex-start">
+      <div style="flex:1;min-width:260px">
+        <h2 style="font-size:14px">Domestic</h2>
+        ${dom.length===0 ? '<div class="mf-empty" style="padding:20px">No domestic headlines available right now.</div>' : dom.map(n => `
+          <div class="mf-card" style="padding:12px 14px;margin-bottom:8px">
+            <a href="${esc(n.link)}" target="_blank" rel="noopener" style="color:var(--navy);font-weight:500;font-size:12.8px;text-decoration:none">${esc(n.title)}</a>
+            <div class="mf-sub" style="margin:4px 0 0">${esc(n.source)}</div>
+          </div>`).join('')}
+      </div>
+      <div style="flex:1;min-width:260px">
+        <h2 style="font-size:14px">International</h2>
+        ${intl.length===0 ? '<div class="mf-empty" style="padding:20px">No international headlines available right now.</div>' : intl.map(n => `
+          <div class="mf-card" style="padding:12px 14px;margin-bottom:8px">
+            <a href="${esc(n.link)}" target="_blank" rel="noopener" style="color:var(--navy);font-weight:500;font-size:12.8px;text-decoration:none">${esc(n.title)}</a>
+            <div class="mf-sub" style="margin:4px 0 0">${esc(n.source)}</div>
+          </div>`).join('')}
+      </div>
+    </div>
+    <div class="notice" style="margin-top:10px">Sourced from Economic Times and Zee Business RSS feeds${res.cached ? ' (cached within the last 15 minutes)' : ''}. Headlines link out to the original publisher.</div>`;
+  } catch(e){
+    html += `<div class="notice warn"><strong>Couldn't load news.</strong> ${esc(e.message||'')}</div>`;
+  }
+  c.innerHTML = html;
+}
+
 function esc(s){ return (s||'').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 // ---------- Handlers ----------
@@ -780,7 +930,8 @@ function attachHandlers(){
       startDate: start,
       nav: Number(document.getElementById('sip-nav').value || 0),
       units: Number(document.getElementById('sip-units').value || 0),
-      folio: document.getElementById('sip-folio').value.trim()
+      folio: document.getElementById('sip-folio').value.trim(),
+      investedTotal: document.getElementById('sip-invested').value ? Number(document.getElementById('sip-invested').value) : null
     });
     saveSips();
     toast('SIP added to register');
@@ -885,7 +1036,7 @@ document.getElementById('btnLogout').onclick = () => {
 async function enterApp(){
   document.getElementById('mfAuthScreen').style.display = 'none';
   document.getElementById('mfapp').style.display = 'flex';
-  state.activeTab = 'risk';
+  state.activeTab = 'dashboard';
   await load();
 }
 
