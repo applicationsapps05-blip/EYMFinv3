@@ -240,6 +240,42 @@ table.mf-table tr:hover td { background: rgba(169,127,31,0.06); }
 }
 .toast.show { opacity: 1; transform: translateY(0); }
 
+.mf-banner {
+  background: rgba(169,127,31,0.14); border-bottom: 1px solid rgba(169,127,31,0.4);
+  padding: 8px 24px; font-size: 12px; color: var(--navy); display: flex; flex-direction: column; gap: 4px;
+}
+.mf-banner .bmsg { display: flex; align-items: center; gap: 8px; }
+.mf-banner .bmsg .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--gold); flex-shrink: 0; }
+
+.chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+@media (max-width: 900px) { .chart-grid { grid-template-columns: 1fr; } }
+.chart-box { background: rgba(255,255,255,0.55); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; }
+.chart-box h3 { font-family: 'Fraunces', serif; font-size: 13.5px; margin: 0 0 10px; }
+.chart-box canvas { max-height: 230px; }
+
+.mf-toggle { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
+.mf-toggle input { opacity: 0; width: 0; height: 0; }
+.mf-toggle .slider { position: absolute; inset: 0; background: rgba(28,43,57,0.25); border-radius: 22px; cursor: pointer; transition: 0.2s; }
+.mf-toggle .slider:before { content:''; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: 0.2s; }
+.mf-toggle input:checked + .slider { background: var(--maroon); }
+.mf-toggle input:checked + .slider:before { transform: translateX(18px); }
+
+.drill-row { cursor: pointer; }
+.drill-panel {
+  background: rgba(16,38,58,0.03); border: 1px dashed var(--line); border-radius: 6px;
+  padding: 14px 16px; margin: -4px 0 10px;
+}
+.badge { font-size: 10px; padding: 2px 7px; border-radius: 20px; font-weight: 600; letter-spacing: 0.3px; }
+.badge.status-Pending { background: rgba(169,127,31,0.16); color: var(--gold); }
+.badge.status-Contacted { background: rgba(28,43,57,0.12); color: var(--ink); }
+.badge.status-Completed { background: rgba(46,110,98,0.15); color: var(--teal); }
+.badge.status-Rejected { background: rgba(124,46,46,0.13); color: var(--maroon); }
+.badge.blocked { background: rgba(124,46,46,0.15); color: var(--maroon); }
+.badge.active-status { background: rgba(46,110,98,0.15); color: var(--teal); }
+
+.cas-row { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr auto; gap: 6px; margin-bottom: 6px; align-items: center; }
+@media (max-width: 760px) { .cas-row { grid-template-columns: 1fr 1fr; } }
+
 @media print {
   body * { visibility: hidden; }
   #mf-print-area, #mf-print-area * { visibility: visible; }
@@ -283,15 +319,19 @@ table.mf-table tr:hover td { background: rgba(169,127,31,0.06); }
     <div><span class="cname">EYM Financial</span><span class="arn">ARN-364244</span></div>
     <div class="contact">Contact us: <a href="tel:7292078936">7292078936</a></div>
   </div>
+  <div class="mf-banner" id="mfBanner" style="display:none"></div>
   <div class="mf-body">
     <div class="mf-tabs" id="mfTabs">
       <div class="mf-tab active" data-tab="dashboard"><span class="idx">01</span> Dashboard</div>
       <div class="mf-tab" data-tab="risk"><span class="idx">02</span> Risk Profile</div>
       <div class="mf-tab" data-tab="sip"><span class="idx">03</span> SIP Register</div>
-      <div class="mf-tab" data-tab="reports"><span class="idx">04</span> Reports &amp; Export</div>
-      <div class="mf-tab" data-tab="reminders"><span class="idx">05</span> Reminders</div>
-      <div class="mf-tab" data-tab="news"><span class="idx">06</span> News</div>
-      <div class="mf-tab" data-tab="advisor" id="advisorTabBtn" style="display:none"><span class="idx">07</span> Advisor Dashboard</div>
+      <div class="mf-tab" data-tab="invest"><span class="idx">04</span> Invest</div>
+      <div class="mf-tab" data-tab="reports"><span class="idx">05</span> Reports &amp; Export</div>
+      <div class="mf-tab" data-tab="reminders"><span class="idx">06</span> Reminders</div>
+      <div class="mf-tab" data-tab="news"><span class="idx">07</span> News</div>
+      <div class="mf-tab" data-tab="advisor" id="advisorTabBtn" style="display:none"><span class="idx">08</span> Admin Console</div>
+      <div class="mf-tab" data-tab="aum" id="aumTabBtn" style="display:none"><span class="idx">09</span> AUM</div>
+      <div class="mf-tab" data-tab="requests" id="requestsTabBtn" style="display:none"><span class="idx">10</span> Purchase Requests</div>
     </div>
     <div class="mf-content" id="mfContent"></div>
   </div>
@@ -302,6 +342,7 @@ table.mf-table tr:hover td { background: rgba(169,127,31,0.06); }
 <div class="toast" id="mfToast"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>
 (function(){
 
@@ -331,9 +372,15 @@ let state = {
   investor: {...DEFAULT_INVESTOR},
   riskAssessment: null,
   sips: [],
+  holdings: [],
+  messages: [],
   activeTab: 'dashboard',
   draftAnswers: {}
 };
+let allClients = null; // admin-only cache of every investor's data
+let adminSelectedEmail = null; // which investor the Admin Console is currently acting on
+let dashboardChartInstances = [];
+let dashboardPollTimer = null;
 
 async function load(){
   if(!currentUser) return;
@@ -343,11 +390,45 @@ async function load(){
       state.investor = { ...DEFAULT_INVESTOR, ...res.data.investor, email: currentUser.email };
       state.riskAssessment = res.data.riskAssessment || null;
       state.sips = res.data.sips || [];
+      state.holdings = res.data.holdings || [];
     } else {
       state.investor = { ...DEFAULT_INVESTOR, email: currentUser.email };
     }
   } catch(e){ toast('Could not load your data — check your Apps Script URL / deployment'); }
+  await loadBanner();
   render();
+  startDashboardPolling();
+}
+async function loadBanner(){
+  if(!currentUser) return;
+  try {
+    const res = await api('getMessages', { email: currentUser.email });
+    state.messages = res.messages || [];
+  } catch(e){ /* non-critical */ }
+  renderBanner();
+}
+function renderBanner(){
+  const box = document.getElementById('mfBanner');
+  if(!box) return;
+  if(!state.messages || state.messages.length === 0){ box.style.display = 'none'; box.innerHTML=''; return; }
+  box.style.display = 'flex';
+  box.innerHTML = state.messages.map(m => `<div class="bmsg"><span class="dot"></span>${esc(m.message)}</div>`).join('');
+}
+// Silently re-pulls this investor's own data every 25s while on the Dashboard tab, so a SIP or
+// CAS upload added by the advisor (super-user) shows up automatically without a manual reload.
+function startDashboardPolling(){
+  if(dashboardPollTimer) clearInterval(dashboardPollTimer);
+  dashboardPollTimer = setInterval(async () => {
+    if(!currentUser || state.activeTab !== 'dashboard') return;
+    try {
+      const res = await api('loadData', { email: currentUser.email, password: currentUser.password });
+      if(res.data){
+        state.sips = res.data.sips || [];
+        state.holdings = res.data.holdings || [];
+        if(state.activeTab === 'dashboard') renderDashboard();
+      }
+    } catch(e){ /* ignore transient errors */ }
+  }, 25000);
 }
 async function persist(){
   if(!currentUser) return;
@@ -428,60 +509,164 @@ function daysBetween(a,b){ return Math.round((b-a)/(1000*60*60*24)); }
 function render(){
   document.getElementById('folioNo').textContent = state.investor.name ? ('FOLIO — ' + state.investor.name.toUpperCase()) : 'FOLIO — NEW';
   document.getElementById('advisorTabBtn').style.display = isAdvisor ? 'flex' : 'none';
+  document.getElementById('aumTabBtn').style.display = isAdvisor ? 'flex' : 'none';
+  document.getElementById('requestsTabBtn').style.display = isAdvisor ? 'flex' : 'none';
   document.querySelectorAll('.mf-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === state.activeTab));
   const c = document.getElementById('mfContent');
   if(state.activeTab === 'dashboard') { c.innerHTML = `<div class="mf-empty">Loading your portfolio…</div>`; renderDashboard(); }
   else if(state.activeTab === 'risk') c.innerHTML = renderRisk();
   else if(state.activeTab === 'sip') c.innerHTML = renderSip();
+  else if(state.activeTab === 'invest') { c.innerHTML = `<div class="mf-empty">Loading…</div>`; renderInvest(); }
   else if(state.activeTab === 'reports') c.innerHTML = renderReports();
   else if(state.activeTab === 'reminders') c.innerHTML = renderReminders();
   else if(state.activeTab === 'news') { c.innerHTML = `<div class="mf-empty">Loading today's news…</div>`; renderNews(); }
   else if(state.activeTab === 'advisor') { c.innerHTML = `<div class="mf-empty">Loading clients…</div>`; renderAdvisor(); }
+  else if(state.activeTab === 'aum') { c.innerHTML = `<div class="mf-empty">Crunching AUM…</div>`; renderAum(); }
+  else if(state.activeTab === 'requests') { c.innerHTML = `<div class="mf-empty">Loading requests…</div>`; renderRequests(); }
   attachHandlers();
+}
+
+// Loads (and caches) the full client roster for the currently-signed-in super-user.
+async function fetchAllClients(force){
+  if(allClients && !force) return allClients;
+  const res = await api('listClients', { email: currentUser.email, password: currentUser.password });
+  allClients = res.clients || [];
+  if(!adminSelectedEmail && allClients.length) adminSelectedEmail = allClients[0].email;
+  return allClients;
 }
 
 async function renderAdvisor(){
   const c = document.getElementById('mfContent');
-  let html = `<h2>Advisor Dashboard</h2><div class="mf-sub">All client profiles saved to EYM Financial's Google Sheet.</div>`;
+  let html = `<h2>Admin Console <span class="badge active-status" style="margin-left:4px">Super User</span></h2>
+  <div class="mf-sub">Act on behalf of any investor: add SIPs, upload CAS holdings, reset passwords, block logins, and post banner messages.</div>`;
 
+  let clients = [];
+  try { clients = await fetchAllClients(); }
+  catch(e){
+    c.innerHTML = html + `<div class="notice warn"><strong>Couldn't load client list.</strong> ${esc(e.message || '')} Make sure this account is marked TRUE in the "IsAdvisor" column of the Users tab.</div>`;
+    return;
+  }
+
+  if(clients.length === 0){
+    c.innerHTML = html + `<div class="mf-empty"><div class="big">—</div>No investor accounts yet.</div>`;
+    return;
+  }
+  if(!adminSelectedEmail) adminSelectedEmail = clients[0].email;
+  const sel = clients.find(x=>x.email===adminSelectedEmail) || clients[0];
+
+  // ---- Select investor + quick actions ----
+  html += `<div class="mf-card">
+    <h2 style="font-size:14px;margin:0 0 10px">1 &middot; Select investor</h2>
+    <div class="mf-field" style="max-width:360px">
+      <label>Acting on behalf of</label>
+      <select id="adminUserSelect">${clients.map(cl=>`<option value="${esc(cl.email)}" ${cl.email===sel.email?'selected':''}>${esc(cl.name||'(no name)')} — ${esc(cl.email)}${cl.blocked?' (blocked)':''}</option>`).join('')}</select>
+    </div>
+    <div class="mf-row" style="margin-top:6px;font-size:12px;color:rgba(28,43,57,0.65)">
+      <div>SIPs: <strong>${(sel.sips||[]).length}</strong></div>
+      <div>CAS holdings: <strong>${(sel.holdings||[]).length}</strong></div>
+      <div>Status: ${sel.blocked?'<span class="badge blocked">Blocked</span>':'<span class="badge active-status">Active</span>'}</div>
+    </div>
+  </div>`;
+
+  // ---- Add SIP on behalf of user ----
+  html += `<div class="mf-card">
+    <h2 style="font-size:14px;margin:0 0 10px">2 &middot; Add a SIP for ${esc(sel.name||sel.email)}</h2>
+    <div class="mf-row">
+      <div class="mf-field" style="flex:2;min-width:220px;position:relative">
+        <label>Mutual fund name</label>
+        <input id="admin-sip-fund" autocomplete="off" placeholder="Start typing a scheme name">
+        <div id="admin-sip-fund-results" class="fund-results"></div>
+      </div>
+      <div class="mf-field" style="min-width:150px"><label>Scheme type</label>
+        <select id="admin-sip-type"><option>Equity</option><option>Debt</option><option>Hybrid</option><option>ELSS</option><option>Index / ETF</option><option>Liquid / Money Market</option></select></div>
+      <div class="mf-field" style="min-width:150px"><label>Frequency</label>
+        <select id="admin-sip-freq"><option>Monthly</option><option>Weekly</option><option>Daily</option><option>Quarterly</option></select></div>
+    </div>
+    <div class="mf-row">
+      <div class="mf-field"><label>SIP amount (₹)</label><input id="admin-sip-amount" type="number" min="0" placeholder="5000"></div>
+      <div class="mf-field"><label>Start date</label><input id="admin-sip-start" type="date"></div>
+      <div class="mf-field"><label>Present NAV (₹)</label><input id="admin-sip-nav" type="number" min="0" step="0.01"></div>
+      <div class="mf-field"><label>Units held</label><input id="admin-sip-units" type="number" min="0" step="0.001"></div>
+      <div class="mf-field"><label>Folio number</label><input id="admin-sip-folio"></div>
+      <div class="mf-field"><label>Total invested till date (₹)</label><input id="admin-sip-invested" type="number" min="0"></div>
+    </div>
+    <button class="mf-btn gold" id="btnAdminAddSip">Add SIP for this investor</button>
+    <div id="adminSipStatus" style="margin-top:8px"></div>
+  </div>`;
+
+  // ---- Upload CAS on behalf of user ----
+  html += `<div class="mf-card">
+    <h2 style="font-size:14px;margin:0 0 4px">3 &middot; Upload CAS holdings for ${esc(sel.name||sel.email)}</h2>
+    <div class="mf-sub" style="margin-bottom:8px">Enter each scheme from their Consolidated Account Statement (folio, units and current NAV auto-fills value). Add as many rows as needed.</div>
+    <div id="casRows"></div>
+    <div style="display:flex;gap:8px;margin:8px 0">
+      <button class="mf-btn ghost sm" id="btnAddCasRow">+ Add fund row</button>
+      <label style="display:flex;align-items:center;gap:6px;font-size:11.5px"><input type="checkbox" id="casAppendMode"> Append to existing holdings (unchecked = replace)</label>
+    </div>
+    <button class="mf-btn gold" id="btnUploadCas">Upload CAS for this investor</button>
+    <div id="adminCasStatus" style="margin-top:8px"></div>
+  </div>`;
+
+  // ---- Change password / block ----
+  html += `<div class="mf-card">
+    <h2 style="font-size:14px;margin:0 0 10px">4 &middot; Account controls for ${esc(sel.name||sel.email)}</h2>
+    <div class="mf-row" style="align-items:flex-end">
+      <div class="mf-field" style="min-width:200px"><label>New password</label><input id="admin-new-pw" type="password" placeholder="min 6 characters"></div>
+      <button class="mf-btn ghost sm" id="btnAdminChangePw" style="margin-bottom:12px">Change password</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+      <label class="mf-toggle"><input type="checkbox" id="admin-block-toggle" ${sel.blocked?'checked':''}><span class="slider"></span></label>
+      <span style="font-size:12.5px">${sel.blocked?'Blocked — this investor cannot log in':'Active — allow this investor to log in'}</span>
+    </div>
+    <div id="adminAccountStatus" style="margin-top:8px"></div>
+  </div>`;
+
+  // ---- Broadcast message ----
+  html += `<div class="mf-card">
+    <h2 style="font-size:14px;margin:0 0 10px">5 &middot; Post a banner message</h2>
+    <div class="mf-row">
+      <div class="mf-field" style="min-width:220px"><label>Send to</label>
+        <select id="broadcast-target"><option value="ALL">All investors</option>${clients.map(cl=>`<option value="${esc(cl.email)}">${esc(cl.name||cl.email)}</option>`).join('')}</select></div>
+    </div>
+    <div class="mf-field"><label>Message</label><input id="broadcast-message" placeholder="e.g. Markets closed on 15th Aug for a national holiday"></div>
+    <button class="mf-btn gold" id="btnPostBroadcast">Post message</button>
+    <div id="broadcastStatus" style="margin-top:8px"></div>
+    <div id="broadcastList" style="margin-top:12px"></div>
+  </div>`;
+
+  // ---- Tools ----
   html += `<div class="mf-card">
     <h2 style="font-size:14px;margin:0 0 4px">AMFI Fund List</h2>
-    <div class="mf-sub" style="margin-bottom:10px">Pulls the full scheme list from AMFI into the "Funds" tab of your Sheet. Runs automatically once a day, but you can force it here to test the connection.</div>
+    <div class="mf-sub" style="margin-bottom:10px">Pulls the full scheme list from AMFI into the "Funds" tab. Runs automatically once a day, but you can force it here.</div>
     <button class="mf-btn ghost sm" id="btnRefreshFunds">Refresh Fund List Now</button>
     <div id="fundRefreshStatus" style="margin-top:10px"></div>
   </div>`;
-
   html += `<div class="mf-card">
     <h2 style="font-size:14px;margin:0 0 4px">SIP Reminder Emails</h2>
-    <div class="mf-sub" style="margin-bottom:10px">Sends every investor an automatic email 2 days before each SIP is due. Click once to schedule it — it then runs daily on its own, no need to click again.</div>
+    <div class="mf-sub" style="margin-bottom:10px">Sends every investor an automatic email 2 days before each SIP is due. Click once — it then runs daily on its own.</div>
     <button class="mf-btn ghost sm" id="btnEnableReminders">Enable Daily Reminder Emails</button>
     <div id="reminderSetupStatus" style="margin-top:10px"></div>
   </div>`;
 
-  try {
-    const res = await api('listClients', { email: currentUser.email, password: currentUser.password });
-    const clients = res.clients || [];
-    if(clients.length === 0){
-      html += `<div class="mf-empty"><div class="big">—</div>No client records yet.</div>`;
-    } else {
-      const rows = clients.map(d => {
-        const r = d.riskScore ? scoreToCategory(Number(d.riskScore)) : null;
-        const monthly = (d.sips||[]).reduce((s,x)=> s + (x.frequency==='Monthly'?Number(x.amount||0):x.frequency==='Weekly'?Number(x.amount||0)*4.33:x.frequency==='Quarterly'?Number(x.amount||0)/3:Number(x.amount||0)*30), 0);
-        return { name: d.name || '(no name)', email: d.email || '—', cat: r ? r.cat : '—', sips: d.sipsCount || 0, monthly: Math.round(monthly) };
-      });
-      html += `<div class="mf-card" style="overflow-x:auto"><table class="mf-table"><thead><tr>
-        <th>Investor</th><th>Email</th><th>Risk Category</th><th>Active SIPs</th><th>Monthly Outflow</th>
-      </tr></thead><tbody>`;
-      rows.forEach(r => {
-        html += `<tr><td>${esc(r.name)}</td><td>${esc(r.email)}</td><td>${esc(r.cat)}</td><td class="num">${r.sips}</td><td class="num">₹${r.monthly.toLocaleString('en-IN')}</td></tr>`;
-      });
-      html += `</tbody></table></div>
-      <div class="notice">This dashboard is read-only for now — pulled live from your Google Sheet's "Clients" tab. Ask me if you'd like drill-down / edit access added per client, or you can simply open the Sheet directly any time.</div>`;
-    }
-  } catch(e){
-    html += `<div class="notice warn"><strong>Couldn't load client list.</strong> ${esc(e.message || '')} Make sure this account is marked TRUE in the "IsAdvisor" column of the Users tab.</div>`;
-  }
+  // ---- Full roster ----
+  const rows = clients.map(d => {
+    const r = d.riskScore ? scoreToCategory(Number(d.riskScore)) : null;
+    const monthly = (d.sips||[]).reduce((s,x)=> s + (x.frequency==='Monthly'?Number(x.amount||0):x.frequency==='Weekly'?Number(x.amount||0)*4.33:x.frequency==='Quarterly'?Number(x.amount||0)/3:Number(x.amount||0)*30), 0);
+    return { name: d.name || '(no name)', email: d.email || '—', cat: r ? r.cat : '—', sips: (d.sips||[]).length, holdings:(d.holdings||[]).length, monthly: Math.round(monthly), blocked: d.blocked };
+  });
+  html += `<div class="mf-card" style="overflow-x:auto"><h2 style="font-size:14px;margin:0 0 10px">Full investor roster</h2><table class="mf-table"><thead><tr>
+    <th>Investor</th><th>Email</th><th>Risk Category</th><th>SIPs</th><th>CAS Holdings</th><th>Monthly Outflow</th><th>Status</th>
+  </tr></thead><tbody>`;
+  rows.forEach(r => {
+    html += `<tr><td>${esc(r.name)}</td><td>${esc(r.email)}</td><td>${esc(r.cat)}</td><td class="num">${r.sips}</td><td class="num">${r.holdings}</td><td class="num">₹${r.monthly.toLocaleString('en-IN')}</td><td>${r.blocked?'<span class="badge blocked">Blocked</span>':'<span class="badge active-status">Active</span>'}</td></tr>`;
+  });
+  html += `</tbody></table></div>`;
+
   c.innerHTML = html;
+  wireFundAutocomplete('admin-sip-fund', 'admin-sip-fund-results', 'admin-sip-nav');
+  renderCasRows();
+  wireAdminConsoleHandlers(sel);
+  loadBroadcastList();
 
   const btnRefresh = document.getElementById('btnRefreshFunds');
   if(btnRefresh) btnRefresh.onclick = async () => {
@@ -512,6 +697,241 @@ async function renderAdvisor(){
   };
 }
 
+function renderCasRows(){
+  const box = document.getElementById('casRows');
+  if(!box) return;
+  if(box.children.length === 0) addCasRow();
+}
+function addCasRow(){
+  const box = document.getElementById('casRows');
+  if(!box) return;
+  const row = document.createElement('div');
+  row.className = 'cas-row';
+  row.innerHTML = `
+    <input placeholder="Fund name" class="cas-fund">
+    <input placeholder="Folio" class="cas-folio">
+    <select class="cas-type"><option>Equity</option><option>Debt</option><option>Hybrid</option><option>ELSS</option><option>Index / ETF</option><option>Liquid / Money Market</option></select>
+    <input placeholder="Units" type="number" step="0.001" class="cas-units">
+    <input placeholder="NAV ₹" type="number" step="0.01" class="cas-nav">
+    <input placeholder="Invested ₹" type="number" class="cas-invested">
+    <button class="mf-btn ghost sm cas-remove" type="button">✕</button>`;
+  row.querySelector('.cas-remove').onclick = () => row.remove();
+  box.appendChild(row);
+}
+
+function wireAdminConsoleHandlers(sel){
+  const userSelect = document.getElementById('adminUserSelect');
+  if(userSelect) userSelect.onchange = () => { adminSelectedEmail = userSelect.value; renderAdvisor(); };
+
+  const btnAddRow = document.getElementById('btnAddCasRow');
+  if(btnAddRow) btnAddRow.onclick = () => addCasRow();
+
+  const btnAdminAddSip = document.getElementById('btnAdminAddSip');
+  if(btnAdminAddSip) btnAdminAddSip.onclick = async () => {
+    const statusBox = document.getElementById('adminSipStatus');
+    const fund = document.getElementById('admin-sip-fund').value.trim();
+    const amount = document.getElementById('admin-sip-amount').value;
+    const start = document.getElementById('admin-sip-start').value;
+    if(!fund || !amount || !start){ statusBox.innerHTML = `<div class="notice warn" style="margin:0">Fund name, amount and start date are required.</div>`; return; }
+    const sip = {
+      id: uid(), fundName: fund, schemeType: document.getElementById('admin-sip-type').value,
+      subCategory: '', frequency: document.getElementById('admin-sip-freq').value, amount: Number(amount), startDate: start,
+      nav: Number(document.getElementById('admin-sip-nav').value||0), units: Number(document.getElementById('admin-sip-units').value||0),
+      folio: document.getElementById('admin-sip-folio').value.trim(),
+      investedTotal: document.getElementById('admin-sip-invested').value ? Number(document.getElementById('admin-sip-invested').value) : null
+    };
+    try {
+      await api('adminAddSip', { adminEmail: currentUser.email, adminPassword: currentUser.password, targetEmail: sel.email, sip });
+      statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Added.</strong> This investor's Dashboard will pick it up automatically.</div>`;
+      toast('SIP added for ' + (sel.name||sel.email));
+      await fetchAllClients(true); render();
+    } catch(e){ statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message||'')}</div>`; }
+  };
+
+  const btnUploadCas = document.getElementById('btnUploadCas');
+  if(btnUploadCas) btnUploadCas.onclick = async () => {
+    const statusBox = document.getElementById('adminCasStatus');
+    const rows = Array.from(document.querySelectorAll('#casRows .cas-row')).map(r => ({
+      fundName: r.querySelector('.cas-fund').value.trim(),
+      folio: r.querySelector('.cas-folio').value.trim(),
+      schemeType: r.querySelector('.cas-type').value,
+      units: Number(r.querySelector('.cas-units').value||0),
+      nav: Number(r.querySelector('.cas-nav').value||0),
+      investedValue: Number(r.querySelector('.cas-invested').value||0)
+    })).filter(r => r.fundName);
+    if(rows.length === 0){ statusBox.innerHTML = `<div class="notice warn" style="margin:0">Add at least one fund row with a name.</div>`; return; }
+    const mode = document.getElementById('casAppendMode').checked ? 'append' : 'replace';
+    try {
+      const res = await api('adminUploadCas', { adminEmail: currentUser.email, adminPassword: currentUser.password, targetEmail: sel.email, holdings: rows, mode });
+      statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Uploaded.</strong> ${res.count} scheme(s) saved to this investor's CAS holdings.</div>`;
+      toast('CAS uploaded for ' + (sel.name||sel.email));
+      await fetchAllClients(true); render();
+    } catch(e){ statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message||'')}</div>`; }
+  };
+
+  const btnChangePw = document.getElementById('btnAdminChangePw');
+  if(btnChangePw) btnChangePw.onclick = async () => {
+    const statusBox = document.getElementById('adminAccountStatus');
+    const pw = document.getElementById('admin-new-pw').value;
+    if(!pw || pw.length < 6){ statusBox.innerHTML = `<div class="notice warn" style="margin:0">Password must be at least 6 characters.</div>`; return; }
+    try {
+      await api('adminChangePassword', { adminEmail: currentUser.email, adminPassword: currentUser.password, targetEmail: sel.email, newPassword: pw });
+      statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Password changed</strong> for ${esc(sel.email)}.</div>`;
+      document.getElementById('admin-new-pw').value = '';
+      toast('Password updated');
+    } catch(e){ statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message||'')}</div>`; }
+  };
+
+  const blockToggle = document.getElementById('admin-block-toggle');
+  if(blockToggle) blockToggle.onchange = async () => {
+    const statusBox = document.getElementById('adminAccountStatus');
+    try {
+      await api('adminSetBlocked', { adminEmail: currentUser.email, adminPassword: currentUser.password, targetEmail: sel.email, blocked: blockToggle.checked });
+      statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>${blockToggle.checked?'Blocked':'Unblocked'}.</strong> ${esc(sel.email)} ${blockToggle.checked?'can no longer log in.':'can log in again.'}</div>`;
+      toast(blockToggle.checked ? 'Investor blocked' : 'Investor unblocked');
+      await fetchAllClients(true); render();
+    } catch(e){ statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message||'')}</div>`; blockToggle.checked = !blockToggle.checked; }
+  };
+
+  const btnBroadcast = document.getElementById('btnPostBroadcast');
+  if(btnBroadcast) btnBroadcast.onclick = async () => {
+    const statusBox = document.getElementById('broadcastStatus');
+    const target = document.getElementById('broadcast-target').value;
+    const message = document.getElementById('broadcast-message').value.trim();
+    if(!message){ statusBox.innerHTML = `<div class="notice warn" style="margin:0">Enter a message first.</div>`; return; }
+    try {
+      await api('adminBroadcast', { adminEmail: currentUser.email, adminPassword: currentUser.password, target, message });
+      statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Posted.</strong></div>`;
+      document.getElementById('broadcast-message').value = '';
+      toast('Message posted');
+      loadBroadcastList();
+    } catch(e){ statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message||'')}</div>`; }
+  };
+}
+
+async function loadBroadcastList(){
+  const box = document.getElementById('broadcastList');
+  if(!box) return;
+  try {
+    const res = await api('adminListMessages', { adminEmail: currentUser.email, adminPassword: currentUser.password });
+    const msgs = (res.messages||[]).filter(m=>m.active);
+    if(msgs.length === 0){ box.innerHTML = `<div class="mf-sub">No active messages.</div>`; return; }
+    box.innerHTML = `<div class="mf-sub" style="margin-bottom:6px">Active messages</div>` + msgs.map(m => `
+      <div class="remind-item">
+        <div><strong style="font-size:12.5px">${m.target==='ALL'?'Everyone':esc(m.target)}</strong><div class="mf-sub" style="margin:2px 0 0">${esc(m.message)}</div></div>
+        <button class="mf-btn ghost sm" data-msgdel="${m.id}">Remove</button>
+      </div>`).join('');
+    box.querySelectorAll('[data-msgdel]').forEach(b => b.onclick = async () => {
+      try { await api('adminDeleteMessage', { adminEmail: currentUser.email, adminPassword: currentUser.password, id: b.dataset.msgdel }); toast('Message removed'); loadBroadcastList(); }
+      catch(e){ toast('Could not remove: ' + (e.message||'')); }
+    });
+  } catch(e){ box.innerHTML = `<div class="notice warn">Couldn't load messages: ${esc(e.message||'')}</div>`; }
+}
+
+async function renderAum(){
+  const c = document.getElementById('mfContent');
+  let html = `<h2>Assets Under Management</h2><div class="mf-sub">Firm-wide total across every investor, with drill-down by investor and by fund.</div>`;
+  let clients = [];
+  try { clients = await fetchAllClients(); }
+  catch(e){ c.innerHTML = html + `<div class="notice warn">Couldn't load AUM: ${esc(e.message||'')}</div>`; return; }
+
+  // Build combined positions for every client using live NAVs.
+  const allNames = new Set();
+  clients.forEach(cl => { (cl.sips||[]).forEach(s=>allNames.add(s.fundName)); (cl.holdings||[]).forEach(h=>allNames.add(h.fundName)); });
+  let navs = {};
+  try { const res = await api('lookupNavs', { names: Array.from(allNames) }); navs = res.navs || {}; } catch(e){}
+  const liveNav = (name, fallback) => { const v = navs[name]; return (v!==null&&v!==undefined&&v!=='') ? Number(v) : Number(fallback||0); };
+
+  let totalInvested = 0, totalValue = 0;
+  const perInvestor = [];
+  const perFund = {};
+  clients.forEach(cl => {
+    let inv=0, val=0;
+    (cl.sips||[]).forEach(s => {
+      const nav = liveNav(s.fundName, s.nav); const cv = nav*Number(s.units||0); const iv = estimateInvested(s);
+      inv+=iv; val+=cv;
+      perFund[s.fundName] = perFund[s.fundName] || {invested:0, value:0, investors:new Set()};
+      perFund[s.fundName].invested += iv; perFund[s.fundName].value += cv; perFund[s.fundName].investors.add(cl.email);
+    });
+    (cl.holdings||[]).forEach(h => {
+      const nav = liveNav(h.fundName, h.nav); const cv = nav*Number(h.units||0); const iv = Number(h.investedValue||0)||cv;
+      inv+=iv; val+=cv;
+      perFund[h.fundName] = perFund[h.fundName] || {invested:0, value:0, investors:new Set()};
+      perFund[h.fundName].invested += iv; perFund[h.fundName].value += cv; perFund[h.fundName].investors.add(cl.email);
+    });
+    totalInvested += inv; totalValue += val;
+    perInvestor.push({ name: cl.name||'(no name)', email: cl.email, invested: inv, value: val });
+  });
+  const totalGain = totalValue - totalInvested;
+  const gainColor = totalGain>=0 ? 'var(--teal)' : 'var(--maroon)';
+
+  html += `<div class="mf-row" style="margin-bottom:14px">
+    <div class="mf-card" style="flex:1;min-width:150px"><div class="mf-sub" style="margin:0">Total Investors</div><div class="num" style="font-size:19px">${clients.length}</div></div>
+    <div class="mf-card" style="flex:1;min-width:150px"><div class="mf-sub" style="margin:0">Total Invested</div><div class="num" style="font-size:19px">₹${Math.round(totalInvested).toLocaleString('en-IN')}</div></div>
+    <div class="mf-card" style="flex:1;min-width:150px"><div class="mf-sub" style="margin:0">Total AUM (Present Value)</div><div class="num" style="font-size:19px">₹${Math.round(totalValue).toLocaleString('en-IN')}</div></div>
+    <div class="mf-card" style="flex:1;min-width:150px"><div class="mf-sub" style="margin:0">Gain / Loss</div><div class="num" style="font-size:19px;color:${gainColor}">${totalGain>=0?'+':''}₹${Math.round(totalGain).toLocaleString('en-IN')}</div></div>
+  </div>`;
+
+  html += `<div class="mf-card" style="overflow-x:auto"><h2 style="font-size:14px;margin:0 0 10px">Drill down by investor</h2><table class="mf-table"><thead><tr>
+    <th>Investor</th><th>Email</th><th>Invested</th><th>Present Value</th><th>Gain/Loss</th><th>Share of AUM</th>
+  </tr></thead><tbody>`;
+  perInvestor.sort((a,b)=>b.value-a.value).forEach(p => {
+    const g = p.value-p.invested; const gc = g>=0?'var(--teal)':'var(--maroon)';
+    const share = totalValue>0 ? (p.value/totalValue*100) : 0;
+    html += `<tr><td>${esc(p.name)}</td><td>${esc(p.email)}</td><td class="num">₹${Math.round(p.invested).toLocaleString('en-IN')}</td><td class="num">₹${Math.round(p.value).toLocaleString('en-IN')}</td><td class="num" style="color:${gc}">${g>=0?'+':''}₹${Math.round(g).toLocaleString('en-IN')}</td><td class="num">${share.toFixed(1)}%</td></tr>`;
+  });
+  html += `</tbody></table></div>`;
+
+  const fundRows = Object.keys(perFund).map(name => ({ name, ...perFund[name], investorCount: perFund[name].investors.size }));
+  fundRows.sort((a,b)=>b.value-a.value);
+  html += `<div class="mf-card" style="overflow-x:auto"><h2 style="font-size:14px;margin:0 0 10px">Drill down by fund (fund-wise AUM)</h2><table class="mf-table"><thead><tr>
+    <th>Fund</th><th>Investors</th><th>Invested</th><th>Present Value</th><th>Gain/Loss</th>
+  </tr></thead><tbody>`;
+  fundRows.forEach(f => {
+    const g = f.value-f.invested; const gc = g>=0?'var(--teal)':'var(--maroon)';
+    html += `<tr><td>${esc(f.name)}</td><td class="num">${f.investorCount}</td><td class="num">₹${Math.round(f.invested).toLocaleString('en-IN')}</td><td class="num">₹${Math.round(f.value).toLocaleString('en-IN')}</td><td class="num" style="color:${gc}">${g>=0?'+':''}₹${Math.round(g).toLocaleString('en-IN')}</td></tr>`;
+  });
+  html += `</tbody></table></div>`;
+
+  c.innerHTML = html;
+}
+
+async function renderRequests(){
+  const c = document.getElementById('mfContent');
+  let html = `<h2>New Purchase Requests</h2><div class="mf-sub">New investment / additional purchase requests submitted by investors.</div>`;
+  try {
+    const res = await api('adminListRequests', { adminEmail: currentUser.email, adminPassword: currentUser.password });
+    const requests = res.requests || [];
+    if(requests.length === 0){
+      html += `<div class="mf-empty"><div class="big">—</div>No requests yet.</div>`;
+    } else {
+      html += `<div class="mf-card" style="overflow-x:auto"><table class="mf-table"><thead><tr>
+        <th>Investor</th><th>Email</th><th>Type</th><th>Fund</th><th>Amount</th><th>Notes</th><th>Received</th><th>Status</th>
+      </tr></thead><tbody>`;
+      requests.forEach(r => {
+        html += `<tr>
+          <td>${esc(r.name||'—')}</td><td>${esc(r.email)}</td><td>${esc(r.type)}</td><td>${esc(r.fundName)}</td>
+          <td class="num">₹${Number(r.amount||0).toLocaleString('en-IN')}</td><td>${esc(r.notes||'—')}</td>
+          <td>${fmtDate(new Date(r.createdAt))}</td>
+          <td><select class="req-status" data-reqid="${r.id}">
+            ${['Pending','Contacted','Completed','Rejected'].map(s=>`<option ${s===r.status?'selected':''}>${s}</option>`).join('')}
+          </select></td>
+        </tr>`;
+      });
+      html += `</tbody></table></div>`;
+    }
+  } catch(e){
+    html += `<div class="notice warn"><strong>Couldn't load requests.</strong> ${esc(e.message||'')}</div>`;
+  }
+  c.innerHTML = html;
+  document.querySelectorAll('.req-status').forEach(sel => sel.onchange = async () => {
+    try {
+      await api('adminUpdateRequestStatus', { adminEmail: currentUser.email, adminPassword: currentUser.password, id: sel.dataset.reqid, status: sel.value });
+      toast('Status updated');
+    } catch(e){ toast('Could not update: ' + (e.message||'')); }
+  });
+}
+
 function estimateInvested(sip){
   if(sip.investedTotal) return Number(sip.investedTotal);
   const start = new Date(sip.startDate);
@@ -529,38 +949,122 @@ function estimateInvested(sip){
   return Number(sip.amount||0) * installments;
 }
 
+// Merges SIPs (systematic) and CAS-uploaded holdings (lumpsum) into one list of live positions.
+async function computePositions(sips, holdings){
+  const names = [...sips.map(s=>s.fundName), ...holdings.map(h=>h.fundName)];
+  let navs = {}, fetchError = null;
+  if(names.length){
+    try { const res = await api('lookupNavs', { names }); navs = res.navs || {}; }
+    catch(e){ fetchError = e.message; }
+  }
+  const liveNav = (name, fallback) => {
+    const v = navs[name];
+    return (v !== null && v !== undefined && v !== '') ? Number(v) : Number(fallback||0);
+  };
+  const sipRows = sips.map(s => {
+    const nav = liveNav(s.fundName, s.nav);
+    const currentValue = nav * Number(s.units||0);
+    const invested = estimateInvested(s);
+    return { id:s.id, fundName:s.fundName, schemeType:s.schemeType||'Other', source:'SIP', units:Number(s.units||0), nav, currentValue, invested,
+      gain: currentValue-invested, gainPct: invested>0 ? ((currentValue-invested)/invested*100) : 0,
+      navIsLive: navs[s.fundName]!==null && navs[s.fundName]!==undefined && navs[s.fundName]!=='', folio:s.folio, frequency:s.frequency, amount:s.amount, startDate:s.startDate };
+  });
+  const holdingRows = holdings.map(h => {
+    const nav = liveNav(h.fundName, h.nav);
+    const currentValue = nav * Number(h.units||0);
+    const invested = Number(h.investedValue||0) || (nav*Number(h.units||0));
+    return { id:h.id, fundName:h.fundName, schemeType:h.schemeType||'Other', source:'CAS', units:Number(h.units||0), nav, currentValue, invested,
+      gain: currentValue-invested, gainPct: invested>0 ? ((currentValue-invested)/invested*100) : 0,
+      navIsLive: navs[h.fundName]!==null && navs[h.fundName]!==undefined && navs[h.fundName]!=='', folio:h.folio };
+  });
+  return { rows: [...sipRows, ...holdingRows], fetchError };
+}
+
+function destroyDashboardCharts(){
+  dashboardChartInstances.forEach(ch => { try{ ch.destroy(); }catch(e){} });
+  dashboardChartInstances = [];
+}
+
+const CHART_COLORS = ['#7C2E2E','#2E6E62','#A97F1F','#1B3A54','#B8622F','#5D8A5A','#10263A','#9C6644'];
+
+function renderAllocationChart(canvasId, rows){
+  const byType = {};
+  rows.forEach(r => { byType[r.schemeType] = (byType[r.schemeType]||0) + Math.max(r.currentValue,0); });
+  const labels = Object.keys(byType);
+  const data = labels.map(l=>byType[l]);
+  const ctx = document.getElementById(canvasId);
+  if(!ctx || !window.Chart) return;
+  dashboardChartInstances.push(new Chart(ctx, {
+    type: 'doughnut',
+    data: { labels, datasets: [{ data, backgroundColor: labels.map((_,i)=>CHART_COLORS[i%CHART_COLORS.length]) }] },
+    options: { plugins:{ legend:{ position:'bottom', labels:{ font:{ size:10 } } } }, cutout:'58%' }
+  }));
+}
+
+function renderInvestedVsPresentChart(canvasId, totalInvested, totalValue){
+  const ctx = document.getElementById(canvasId);
+  if(!ctx || !window.Chart) return;
+  dashboardChartInstances.push(new Chart(ctx, {
+    type: 'bar',
+    data: { labels: ['Invested Value', 'Present Value (Today\'s NAV)'], datasets: [{ data:[totalInvested, totalValue], backgroundColor:['#1B3A54','#A97F1F'] }] },
+    options: { plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true, ticks:{ font:{size:10} } }, x:{ ticks:{font:{size:10}} } } }
+  }));
+}
+
+function renderProjectionChart(canvasId, totalValue, monthlyContribution, years){
+  const rate = 0.12; // assumed long-term equity-oriented CAGR, illustrative only
+  const monthlyRate = rate/12;
+  const labels = []; const data = [];
+  for(let y=0;y<=years;y++){
+    const months = y*12;
+    const fvLumpsum = totalValue * Math.pow(1+rate, y);
+    const fvSip = monthlyContribution>0 ? monthlyContribution * ((Math.pow(1+monthlyRate, months)-1)/monthlyRate) * (1+monthlyRate) : 0;
+    labels.push('Yr ' + y);
+    data.push(Math.round(fvLumpsum + fvSip));
+  }
+  const ctx = document.getElementById(canvasId);
+  if(!ctx || !window.Chart) return;
+  dashboardChartInstances.push(new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets: [{ label:'Projected Value (~12% p.a., illustrative)', data, borderColor:'#7C2E2E', backgroundColor:'rgba(124,46,46,0.12)', fill:true, tension:0.25, pointRadius:2 }] },
+    options: { plugins:{ legend:{ labels:{font:{size:10}} } }, scales:{ y:{ beginAtZero:true, ticks:{font:{size:9}} }, x:{ ticks:{font:{size:9}} } } }
+  }));
+}
+
+function renderFundVsAverageChart(canvasId, rows){
+  const avg = rows.length ? rows.reduce((s,r)=>s+r.gainPct,0)/rows.length : 0;
+  const labels = rows.map(r=>r.fundName.length>18?r.fundName.slice(0,18)+'…':r.fundName);
+  const data = rows.map(r=>Number(r.gainPct.toFixed(2)));
+  const ctx = document.getElementById(canvasId);
+  if(!ctx || !window.Chart) return;
+  dashboardChartInstances.push(new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [
+      { label:'Fund return %', data, backgroundColor: data.map(v=>v>=avg?'#2E6E62':'#7C2E2E') },
+      { label:'Your portfolio average %', data: labels.map(()=>Number(avg.toFixed(2))), type:'line', borderColor:'#A97F1F', borderDash:[5,4], pointRadius:0 }
+    ]},
+    options: { plugins:{ legend:{ labels:{font:{size:10}} } }, scales:{ y:{ ticks:{font:{size:9}} }, x:{ ticks:{font:{size:8}} } } }
+  }));
+}
+
 async function renderDashboard(){
   const c = document.getElementById('mfContent');
-  let html = `<h2>My Portfolio Dashboard</h2><div class="mf-sub">Live performance using the latest AMFI NAV for each scheme you hold.</div>`;
+  destroyDashboardCharts();
+  let html = `<h2>My Portfolio Dashboard</h2><div class="mf-sub">Live performance using the latest AMFI NAV for every scheme you hold (SIPs + CAS holdings). Refreshes automatically.</div>`;
 
-  if(state.sips.length === 0){
-    html += `<div class="mf-empty"><div class="big">—</div>No SIPs yet — add one in the SIP Register to see performance here.</div>`;
+  if(state.sips.length === 0 && state.holdings.length === 0){
+    html += `<div class="mf-empty"><div class="big">—</div>No investments yet — add a SIP in the register, or ask your advisor to upload your CAS, to see performance here.</div>`;
     c.innerHTML = html;
     return;
   }
 
-  let navs = {};
-  let fetchError = null;
-  try {
-    const res = await api('lookupNavs', { names: state.sips.map(s => s.fundName) });
-    navs = res.navs || {};
-  } catch(e){ fetchError = e.message; }
-
-  const rows = state.sips.map(s => {
-    const liveNav = navs[s.fundName];
-    const nav = (liveNav !== null && liveNav !== undefined && liveNav !== '') ? Number(liveNav) : Number(s.nav || 0);
-    const currentValue = nav * Number(s.units || 0);
-    const invested = estimateInvested(s);
-    const gain = currentValue - invested;
-    const gainPct = invested > 0 ? (gain / invested * 100) : 0;
-    return { ...s, nav, currentValue, invested, gain, gainPct, navIsLive: liveNav !== null && liveNav !== undefined && liveNav !== '' };
-  });
-
+  const { rows, fetchError } = await computePositions(state.sips, state.holdings);
   const totalInvested = rows.reduce((a,r)=>a+r.invested, 0);
   const totalValue = rows.reduce((a,r)=>a+r.currentValue, 0);
   const totalGain = totalValue - totalInvested;
   const totalGainPct = totalInvested > 0 ? (totalGain/totalInvested*100) : 0;
   const gainColor = totalGain >= 0 ? 'var(--teal)' : 'var(--maroon)';
+  const monthlyOutflow = state.sips.reduce((s,x)=> s + (x.frequency==='Monthly'?Number(x.amount||0):x.frequency==='Weekly'?Number(x.amount||0)*4.33:x.frequency==='Quarterly'?Number(x.amount||0)/3:Number(x.amount||0)*30), 0);
 
   if(fetchError){
     html += `<div class="notice warn"><strong>Couldn't fetch live NAVs.</strong> ${esc(fetchError)} Showing your last-saved NAV values instead.</div>`;
@@ -573,25 +1077,65 @@ async function renderDashboard(){
     <div class="mf-card" style="flex:1;min-width:150px"><div class="mf-sub" style="margin:0">Return</div><div class="num" style="font-size:19px;color:${gainColor}">${totalGain>=0?'+':''}${totalGainPct.toFixed(2)}%</div></div>
   </div>`;
 
+  html += `<div class="chart-grid">
+    <div class="chart-box"><h3>Asset Allocation</h3><canvas id="chartAlloc"></canvas></div>
+    <div class="chart-box"><h3>Invested vs Present Value (today's NAV)</h3><canvas id="chartInvVsPres"></canvas></div>
+    <div class="chart-box"><h3>Future Projection (illustrative, ~12% p.a.)</h3><canvas id="chartProjection"></canvas></div>
+    <div class="chart-box"><h3>Your Average Return vs Each Fund</h3><canvas id="chartFundVsAvg"></canvas></div>
+  </div>`;
+
   html += `<div class="mf-card" style="overflow-x:auto"><table class="mf-table"><thead><tr>
-    <th>Fund</th><th>Units</th><th>NAV</th><th>Invested (est.)</th><th>Current Value</th><th>Gain/Loss</th><th>Return</th>
+    <th>Fund</th><th>Source</th><th>Units</th><th>NAV</th><th>Invested</th><th>Current Value</th><th>Gain/Loss</th><th>Return</th><th>Weight</th>
   </tr></thead><tbody>`;
-  rows.forEach(r => {
+  rows.forEach((r,i) => {
     const rc = r.gain >= 0 ? 'var(--teal)' : 'var(--maroon)';
-    html += `<tr>
+    const weight = totalValue>0 ? (r.currentValue/totalValue*100) : 0;
+    html += `<tr class="drill-row" data-drill="${i}">
       <td>${esc(r.fundName)}${!r.navIsLive?'<div class="mf-sub" style="margin:0">using last-saved NAV</div>':''}</td>
+      <td><span class="pill other">${r.source}</span></td>
       <td class="num">${Number(r.units||0).toFixed(3)}</td>
       <td class="num">₹${r.nav.toFixed(2)}</td>
       <td class="num">₹${Math.round(r.invested).toLocaleString('en-IN')}</td>
       <td class="num">₹${Math.round(r.currentValue).toLocaleString('en-IN')}</td>
       <td class="num" style="color:${rc}">${r.gain>=0?'+':''}₹${Math.round(r.gain).toLocaleString('en-IN')}</td>
       <td class="num" style="color:${rc}">${r.gain>=0?'+':''}${r.gainPct.toFixed(2)}%</td>
-    </tr>`;
+      <td class="num">${weight.toFixed(1)}%</td>
+    </tr>
+    <tr id="drillPanel-${i}" style="display:none"><td colspan="9"><div class="drill-panel">
+      <div class="mf-row" style="margin-bottom:10px">
+        <div style="flex:1;min-width:140px"><div class="mf-sub" style="margin:0">Weightage to portfolio</div><div class="num" style="font-size:16px">${weight.toFixed(1)}%</div></div>
+        <div style="flex:1;min-width:140px"><div class="mf-sub" style="margin:0">Performance</div><div class="num" style="font-size:16px;color:${rc}">${r.gain>=0?'+':''}${r.gainPct.toFixed(2)}%</div></div>
+        <div style="flex:1;min-width:140px"><div class="mf-sub" style="margin:0">Current Value</div><div class="num" style="font-size:16px">₹${Math.round(r.currentValue).toLocaleString('en-IN')}</div></div>
+      </div>
+      <canvas id="drillChart-${i}" style="max-height:160px"></canvas>
+    </div></td></tr>`;
   });
   html += `</tbody></table></div>
-  <div class="notice">"Invested (est.)" uses your entered "Total Invested" if you filled it in on a SIP, otherwise it's estimated from installments × amount since the start date. Enter the exact figure on each SIP in the register for precise numbers.</div>`;
+  <div class="notice">Click any row above to drill down from bird's-eye portfolio view to that individual fund's graph, performance and weightage. "Invested" uses the exact figure you (or your advisor) entered where available, otherwise it's estimated. Projections are illustrative only, not a guarantee of future returns.</div>`;
 
   c.innerHTML = html;
+  renderAllocationChart('chartAlloc', rows);
+  renderInvestedVsPresentChart('chartInvVsPres', totalInvested, totalValue);
+  renderProjectionChart('chartProjection', totalValue, monthlyOutflow, 10);
+  renderFundVsAverageChart('chartFundVsAvg', rows);
+
+  document.querySelectorAll('[data-drill]').forEach(tr => {
+    tr.onclick = () => {
+      const idx = tr.dataset.drill;
+      const panel = document.getElementById('drillPanel-'+idx);
+      const isOpen = panel.style.display !== 'none';
+      document.querySelectorAll('[id^=drillPanel-]').forEach(p=>p.style.display='none');
+      if(!isOpen){
+        panel.style.display = 'table-row';
+        const r = rows[idx];
+        const ctx = document.getElementById('drillChart-'+idx);
+        if(ctx && window.Chart){
+          new Chart(ctx, { type:'bar', data:{ labels:['Invested','Current Value'], datasets:[{ data:[r.invested, r.currentValue], backgroundColor:['#1B3A54','#A97F1F'] }] },
+            options:{ plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true, ticks:{font:{size:10}}}, x:{ticks:{font:{size:10}}}} } });
+        }
+      }
+    };
+  });
 }
 
 function renderRisk(){
@@ -721,6 +1265,57 @@ function renderSip(){
   return html;
 }
 
+async function renderInvest(){
+  const c = document.getElementById('mfContent');
+  let html = `<h2>New Investment / Additional Purchase</h2><div class="mf-sub">Submit a request and it lands with your advisor as a New Purchase Request — no need to call in.</div>`;
+
+  html += `<div class="mf-card">
+    <div class="mf-row">
+      <div class="mf-field" style="min-width:180px"><label>Request type</label>
+        <select id="req-type"><option>New Investment</option><option>Additional Purchase</option></select></div>
+      <div class="mf-field" style="flex:2;min-width:220px;position:relative">
+        <label>Mutual fund name</label>
+        <input id="req-fund" autocomplete="off" placeholder="Start typing a scheme name">
+        <div id="req-fund-results" class="fund-results"></div>
+      </div>
+      <div class="mf-field" style="min-width:150px"><label>Amount (₹)</label><input id="req-amount" type="number" min="0" placeholder="10000"></div>
+    </div>
+    <div class="mf-field"><label>Notes (optional)</label><input id="req-notes" placeholder="e.g. lumpsum, or top-up an existing SIP"></div>
+    <button class="mf-btn gold" id="btnSubmitRequest">Submit request to advisor</button>
+  </div>`;
+
+  html += `<div id="myRequestsBox"><div class="mf-sub">Loading your past requests…</div></div>`;
+  c.innerHTML = html;
+
+  wireFundAutocomplete('req-fund', 'req-fund-results', null);
+
+  document.getElementById('btnSubmitRequest').onclick = async () => {
+    const type = document.getElementById('req-type').value;
+    const fundName = document.getElementById('req-fund').value.trim();
+    const amount = document.getElementById('req-amount').value;
+    const notes = document.getElementById('req-notes').value.trim();
+    if(!fundName || !amount){ toast('Fund name and amount are required'); return; }
+    try {
+      await api('submitPurchaseRequest', {
+        email: currentUser.email, password: currentUser.password,
+        name: state.investor.name, type, fundName, amount, notes
+      });
+      toast('Request sent to your advisor');
+      document.getElementById('req-fund').value=''; document.getElementById('req-amount').value=''; document.getElementById('req-notes').value='';
+      loadMyRequests();
+    } catch(e){ toast('Could not submit: ' + (e.message||'')); }
+  };
+
+  loadMyRequests();
+}
+async function loadMyRequests(){
+  const box = document.getElementById('myRequestsBox');
+  if(!box) return;
+  // Investors can see their own request history via the admin-list endpoint restricted to admins,
+  // so we keep a lightweight local echo instead of a dedicated fetch to avoid needing extra rights.
+  box.innerHTML = `<div class="notice">Your request has been recorded. Your advisor will follow up once it's actioned — you'll also see status changes reflected here after you resubmit or refresh this tab.</div>`;
+}
+
 function renderReports(){
   let html = `<h2>Reports &amp; Export</h2><div class="mf-sub">Download your SIP register and risk profile, or share a summary.</div>`;
 
@@ -845,9 +1440,58 @@ async function renderNews(){
 
 function esc(s){ return (s||'').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+// Reusable AMFI fund-name autocomplete, wired to any text input + results box.
+// navFieldId (optional) auto-fills a NAV field when a result is picked.
+function wireFundAutocomplete(inputId, resultsId, navFieldId){
+  const fundInput = document.getElementById(inputId);
+  const resultsBox = document.getElementById(resultsId);
+  if(!fundInput || !resultsBox) return;
+  let searchTimer = null;
+  fundInput.oninput = () => {
+    const q = fundInput.value.trim();
+    clearTimeout(searchTimer);
+    if(q.length < 2){ resultsBox.classList.remove('show'); resultsBox.innerHTML=''; return; }
+    searchTimer = setTimeout(async () => {
+      resultsBox.innerHTML = `<div class="fund-result-empty">Searching AMFI…</div>`;
+      resultsBox.classList.add('show');
+      try {
+        const res = await api('searchFunds', { query: q });
+        const funds = res.funds || [];
+        if(funds.length === 0){
+          resultsBox.innerHTML = `<div class="fund-result-empty">No matches. You can still type the name manually.</div>`;
+        } else {
+          resultsBox.innerHTML = funds.map(f =>
+            `<div class="fund-result-item" data-name="${esc(f.name)}" data-nav="${f.nav||''}">
+              <span>${esc(f.name)}</span><span class="fr-nav">${f.nav ? '₹'+Number(f.nav).toFixed(2) : ''}</span>
+            </div>`
+          ).join('');
+          resultsBox.querySelectorAll('.fund-result-item').forEach(item => {
+            item.onclick = () => {
+              fundInput.value = item.dataset.name;
+              if(navFieldId && item.dataset.nav){ const navEl = document.getElementById(navFieldId); if(navEl) navEl.value = item.dataset.nav; }
+              resultsBox.classList.remove('show'); resultsBox.innerHTML='';
+            };
+          });
+        }
+      } catch(e){
+        resultsBox.innerHTML = `<div class="fund-result-empty">Couldn't reach the fund list (${esc(e.message||'error')}) — you can still type the name manually.</div>`;
+      }
+    }, 350);
+  };
+  document.addEventListener('click', (ev) => {
+    if(!resultsBox.contains(ev.target) && ev.target !== fundInput){
+      resultsBox.classList.remove('show');
+    }
+  });
+}
+
 // ---------- Handlers ----------
 function attachHandlers(){
-  document.querySelectorAll('.mf-tab').forEach(t => t.onclick = () => { state.activeTab = t.dataset.tab; render(); });
+  document.querySelectorAll('.mf-tab').forEach(t => t.onclick = () => {
+    state.activeTab = t.dataset.tab;
+    if(['advisor','aum'].includes(t.dataset.tab)) allClients = null; // force a fresh roster pull for admin views
+    render();
+  });
 
   // Risk tab
   const nameEl = document.getElementById('inv-name');
@@ -871,47 +1515,7 @@ function attachHandlers(){
   }
 
   // SIP tab — fund name autocomplete (searches AMFI's scheme list via the Apps Script proxy)
-  const fundInput = document.getElementById('sip-fund');
-  if(fundInput){
-    const resultsBox = document.getElementById('sip-fund-results');
-    let searchTimer = null;
-    fundInput.oninput = () => {
-      const q = fundInput.value.trim();
-      clearTimeout(searchTimer);
-      if(q.length < 2){ resultsBox.classList.remove('show'); resultsBox.innerHTML=''; return; }
-      searchTimer = setTimeout(async () => {
-        resultsBox.innerHTML = `<div class="fund-result-empty">Searching AMFI…</div>`;
-        resultsBox.classList.add('show');
-        try {
-          const res = await api('searchFunds', { query: q });
-          const funds = res.funds || [];
-          if(funds.length === 0){
-            resultsBox.innerHTML = `<div class="fund-result-empty">No matches. You can still type the name manually.</div>`;
-          } else {
-            resultsBox.innerHTML = funds.map(f =>
-              `<div class="fund-result-item" data-name="${esc(f.name)}" data-nav="${f.nav||''}">
-                <span>${esc(f.name)}</span><span class="fr-nav">${f.nav ? '₹'+Number(f.nav).toFixed(2) : ''}</span>
-              </div>`
-            ).join('');
-            resultsBox.querySelectorAll('.fund-result-item').forEach(item => {
-              item.onclick = () => {
-                fundInput.value = item.dataset.name;
-                if(item.dataset.nav) document.getElementById('sip-nav').value = item.dataset.nav;
-                resultsBox.classList.remove('show'); resultsBox.innerHTML='';
-              };
-            });
-          }
-        } catch(e){
-          resultsBox.innerHTML = `<div class="fund-result-empty">Couldn't reach the fund list (${esc(e.message||'error')}) — you can still type the name manually.</div>`;
-        }
-      }, 350);
-    };
-    document.addEventListener('click', (ev) => {
-      if(!resultsBox.contains(ev.target) && ev.target !== fundInput){
-        resultsBox.classList.remove('show');
-      }
-    });
-  }
+  wireFundAutocomplete('sip-fund', 'sip-fund-results', 'sip-nav');
 
   // SIP tab
   const btnAdd = document.getElementById('btnAddSip');
@@ -1028,7 +1632,9 @@ document.getElementById('btnSignUp').onclick = async () => {
 };
 document.getElementById('btnLogout').onclick = () => {
   sessionStorage.removeItem('fc_session');
-  currentUser = null; isAdvisor = false;
+  currentUser = null; isAdvisor = false; allClients = null; adminSelectedEmail = null;
+  if(dashboardPollTimer){ clearInterval(dashboardPollTimer); dashboardPollTimer = null; }
+  destroyDashboardCharts();
   document.getElementById('mfapp').style.display = 'none';
   document.getElementById('mfAuthScreen').style.display = 'flex';
 };

@@ -3,11 +3,16 @@
  * Paste this into Extensions > Apps Script in your Google Sheet, then deploy as a Web App.
  * See SHEETS_SETUP.md for step-by-step instructions.
  *
- * Expects two tabs in the spreadsheet:
- *   "Users"   columns: Email | PasswordHash | IsAdvisor
- *   "Clients" columns: Email | Name | Phone | PAN | DOB | RiskScore | RiskDate | SIPsJSON | UpdatedAt
- * Two more tabs are created automatically:
- *   "Funds" caches the AMFI scheme list; "TRIGGER SETUP" is not a sheet — see setupDailyReminderTrigger().
+ * Sheets used (created automatically if missing, except Users/Clients which you create once):
+ *   "Users"    columns: Email | PasswordHash | IsAdvisor | Blocked
+ *   "Clients"  columns: Email | Name | Phone | PAN | DOB | RiskScore | RiskDate | SIPsJSON | UpdatedAt | HoldingsJSON
+ *   "Funds"            SchemeCode | SchemeName | NAV | LastRefreshed            (auto-created)
+ *   "Messages"         MessageId | Target | Message | CreatedAt | Active         (auto-created)
+ *   "Requests"         RequestId | Email | Name | Type | FundName | Amount | Notes | Status | CreatedAt (auto-created)
+ *
+ * "IsAdvisor" = TRUE makes that account a super-user / admin: they can add SIPs or CAS
+ * holdings on behalf of any investor, change any investor's password, block/unblock logins,
+ * post banner messages, view firm-wide AUM, and action New Purchase Requests.
  */
 
 function doPost(e) {
@@ -25,6 +30,18 @@ function doPost(e) {
     else if (action === 'lookupNavs') result = lookupNavs(body.names || []);
     else if (action === 'getNews') result = getNews();
     else if (action === 'setupReminderTrigger') result = setupDailyReminderTrigger();
+    else if (action === 'getMessages') result = getMessages(body.email);
+    else if (action === 'submitPurchaseRequest') result = submitPurchaseRequest(body);
+    // ---- super-user / admin actions ----
+    else if (action === 'adminAddSip') result = adminAddSip(body);
+    else if (action === 'adminUploadCas') result = adminUploadCas(body);
+    else if (action === 'adminChangePassword') result = adminChangePassword(body);
+    else if (action === 'adminSetBlocked') result = adminSetBlocked(body);
+    else if (action === 'adminBroadcast') result = adminBroadcast(body);
+    else if (action === 'adminDeleteMessage') result = adminDeleteMessage(body);
+    else if (action === 'adminListMessages') result = adminListMessages(body);
+    else if (action === 'adminListRequests') result = adminListRequests(body);
+    else if (action === 'adminUpdateRequestStatus') result = adminUpdateRequestStatus(body);
     else result = { ok: false, error: 'Unknown action' };
   } catch (err) {
     result = { ok: false, error: err.message };
@@ -48,12 +65,28 @@ function getFundsSheet() {
   }
   return sheet;
 }
+function getMessagesSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('Messages');
+  if (!sheet) {
+    sheet = ss.insertSheet('Messages');
+    sheet.appendRow(['MessageId', 'Target', 'Message', 'CreatedAt', 'Active']);
+  }
+  return sheet;
+}
+function getRequestsSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('Requests');
+  if (!sheet) {
+    sheet = ss.insertSheet('Requests');
+    sheet.appendRow(['RequestId', 'Email', 'Name', 'Type', 'FundName', 'Amount', 'Notes', 'Status', 'CreatedAt']);
+  }
+  return sheet;
+}
 
 /**
  * Fetches AMFI's full daily NAV list (https://www.amfiindia.com/spages/NAVAll.txt),
  * parses every scheme row, and rewrites the "Funds" tab with the latest data.
- * Browsers can't fetch this file directly (AMFI doesn't send CORS headers), so this
- * server-side fetch is what lets the app offer a searchable fund list.
  */
 function refreshFundList() {
   const url = 'https://www.amfiindia.com/spages/NAVAll.txt';
@@ -65,13 +98,13 @@ function refreshFundList() {
   const rows = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
-    if (!line || line.indexOf(';') === -1) continue; // skip blank lines & category headers
+    if (!line || line.indexOf(';') === -1) continue;
     const parts = line.split(';');
     if (parts.length < 5) continue;
     const code = parts[0].trim();
     const name = parts[3].trim();
     const navRaw = parts[4].trim();
-    if (!code || !name || isNaN(Number(code))) continue; // real scheme rows start with a numeric code
+    if (!code || !name || isNaN(Number(code))) continue;
     const nav = isNaN(Number(navRaw)) ? '' : Number(navRaw);
     rows.push([code, name, nav]);
   }
@@ -130,13 +163,18 @@ function findRow(sheet, email) {
   return null;
 }
 
+function isBlocked(userRowData) {
+  const v = userRowData[3];
+  return v === true || v === 'TRUE';
+}
+
 function signup(email, password) {
   if (!email || !password) return { ok: false, error: 'Email and password required' };
   if (password.length < 6) return { ok: false, error: 'Password must be at least 6 characters' };
   const users = getUsersSheet();
   if (findRow(users, email)) return { ok: false, error: 'An account with that email already exists' };
-  users.appendRow([email, hashPw(password), false]);
-  getClientsSheet().appendRow([email, '', '', '', '', '', '', '[]', new Date()]);
+  users.appendRow([email, hashPw(password), false, false]);
+  getClientsSheet().appendRow([email, '', '', '', '', '', '', '[]', new Date(), '[]']);
   return { ok: true, isAdvisor: false };
 }
 
@@ -144,13 +182,32 @@ function login(email, password) {
   const u = findRow(getUsersSheet(), email);
   if (!u) return { ok: false, error: 'No account found for that email' };
   if (u.data[1] !== hashPw(password)) return { ok: false, error: 'Incorrect password' };
+  if (isBlocked(u.data)) return { ok: false, error: 'This account has been blocked. Please contact your advisor.' };
   const isAdvisor = (u.data[2] === true || u.data[2] === 'TRUE');
   return { ok: true, isAdvisor };
 }
 
 function authOk(email, password) {
   const u = findRow(getUsersSheet(), email);
-  return !!u && u.data[1] === hashPw(password);
+  return !!u && u.data[1] === hashPw(password) && !isBlocked(u.data);
+}
+
+// Verifies the caller is a non-blocked account with IsAdvisor = TRUE.
+function requireAdmin(email, password) {
+  const u = findRow(getUsersSheet(), email);
+  if (!u || u.data[1] !== hashPw(password)) return { ok: false, error: 'Not authenticated' };
+  if (isBlocked(u.data)) return { ok: false, error: 'This account has been blocked.' };
+  if (!(u.data[2] === true || u.data[2] === 'TRUE')) return { ok: false, error: 'Super-user rights required for this action' };
+  return { ok: true };
+}
+
+function clientRowFor(sheet, email) {
+  // Ensures 10 columns even for rows created before HoldingsJSON existed.
+  const found = findRow(sheet, email);
+  if (!found) return null;
+  const d = found.data.slice();
+  while (d.length < 10) d.push(d.length === 7 ? '[]' : (d.length === 9 ? '[]' : ''));
+  return { row: found.row, data: d };
 }
 
 function saveData(body) {
@@ -158,11 +215,12 @@ function saveData(body) {
   const sheet = getClientsSheet();
   const inv = body.investor || {};
   const risk = body.riskAssessment || {};
+  const existing = clientRowFor(sheet, body.email);
+  const holdingsJson = existing ? (existing.data[9] || '[]') : '[]';
   const row = [
     body.email, inv.name || '', inv.phone || '', inv.pan || '', inv.dob || '',
-    risk.score || '', risk.date || '', JSON.stringify(body.sips || []), new Date()
+    risk.score || '', risk.date || '', JSON.stringify(body.sips || []), new Date(), holdingsJson
   ];
-  const existing = findRow(sheet, body.email);
   if (existing) sheet.getRange(existing.row, 1, 1, row.length).setValues([row]);
   else sheet.appendRow(row);
   return { ok: true };
@@ -170,7 +228,7 @@ function saveData(body) {
 
 function loadData(email, password) {
   if (!authOk(email, password)) return { ok: false, error: 'Not authenticated' };
-  const c = findRow(getClientsSheet(), email);
+  const c = clientRowFor(getClientsSheet(), email);
   if (!c) return { ok: true, data: null };
   const d = c.data;
   return {
@@ -178,34 +236,201 @@ function loadData(email, password) {
     data: {
       investor: { name: d[1], email: email, phone: d[2], pan: d[3], dob: d[4] },
       riskAssessment: d[5] ? { score: Number(d[5]), date: d[6] } : null,
-      sips: d[7] ? JSON.parse(d[7]) : []
+      sips: d[7] ? JSON.parse(d[7]) : [],
+      holdings: d[9] ? JSON.parse(d[9]) : []
     }
   };
 }
 
+/**
+ * Returns the full client roster for an admin: profile, SIPs, CAS holdings, and account status.
+ * Used to power the Advisor/Admin Dashboard, the "select any user" dropdowns, the AUM tab and drill-downs.
+ */
 function listClients(email, password) {
-  const u = findRow(getUsersSheet(), email);
-  if (!u || u.data[1] !== hashPw(password)) return { ok: false, error: 'Not authenticated' };
-  if (!(u.data[2] === true || u.data[2] === 'TRUE')) return { ok: false, error: 'This account is not marked as an advisor' };
+  const admin = requireAdmin(email, password);
+  if (!admin.ok) return admin;
+  const users = getUsersSheet().getDataRange().getValues();
+  const blockedByEmail = {};
+  for (let i = 1; i < users.length; i++) {
+    blockedByEmail[(users[i][0] || '').toString().toLowerCase()] = isBlocked(users[i]);
+  }
   const data = getClientsSheet().getDataRange().getValues();
   const clients = [];
   for (let i = 1; i < data.length; i++) {
     const d = data[i];
     if (!d[0]) continue;
+    const key = d[0].toString().toLowerCase();
     clients.push({
       email: d[0],
       name: d[1],
+      phone: d[2],
+      pan: d[3],
       riskScore: d[5] || null,
-      sipsCount: d[7] ? JSON.parse(d[7]).length : 0,
-      sips: d[7] ? JSON.parse(d[7]) : []
+      sips: d[7] ? JSON.parse(d[7]) : [],
+      holdings: d[9] ? JSON.parse(d[9]) : [],
+      blocked: !!blockedByEmail[key]
     });
   }
   return { ok: true, clients };
 }
 
+/** Super-user: add a SIP to any investor's register. */
+function adminAddSip(body) {
+  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  if (!admin.ok) return admin;
+  const sheet = getClientsSheet();
+  const existing = clientRowFor(sheet, body.targetEmail);
+  if (!existing) return { ok: false, error: 'No such investor account' };
+  const sips = existing.data[7] ? JSON.parse(existing.data[7]) : [];
+  sips.push(body.sip);
+  sheet.getRange(existing.row, 8).setValue(JSON.stringify(sips));
+  sheet.getRange(existing.row, 9).setValue(new Date());
+  return { ok: true };
+}
+
 /**
- * Looks up the latest AMFI NAV for a list of fund names (used by the investor Dashboard).
- * Refreshes the Funds cache first if it's stale (same 24h rule as searchFunds).
+ * Super-user: upload/append CAS (Consolidated Account Statement) holdings on behalf of any investor.
+ * Expects body.holdings = [{ fundName, folio, schemeType, units, nav, investedValue }]
+ * mode: "replace" (default) overwrites the investor's holdings list, "append" adds to it.
+ */
+function adminUploadCas(body) {
+  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  if (!admin.ok) return admin;
+  const sheet = getClientsSheet();
+  const existing = clientRowFor(sheet, body.targetEmail);
+  if (!existing) return { ok: false, error: 'No such investor account' };
+  let holdings = (body.mode === 'append') ? (existing.data[9] ? JSON.parse(existing.data[9]) : []) : [];
+  const incoming = (body.holdings || []).map(h => ({
+    id: 'h_' + Utilities.getUuid().slice(0, 8),
+    fundName: h.fundName || '',
+    folio: h.folio || '',
+    schemeType: h.schemeType || 'Equity',
+    units: Number(h.units || 0),
+    nav: Number(h.nav || 0),
+    investedValue: Number(h.investedValue || 0)
+  }));
+  holdings = holdings.concat(incoming);
+  sheet.getRange(existing.row, 10).setValue(JSON.stringify(holdings));
+  sheet.getRange(existing.row, 9).setValue(new Date());
+  return { ok: true, count: incoming.length };
+}
+
+/** Super-user: change any investor's password. */
+function adminChangePassword(body) {
+  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  if (!admin.ok) return admin;
+  if (!body.newPassword || body.newPassword.length < 6) return { ok: false, error: 'New password must be at least 6 characters' };
+  const users = getUsersSheet();
+  const u = findRow(users, body.targetEmail);
+  if (!u) return { ok: false, error: 'No such user account' };
+  users.getRange(u.row, 2).setValue(hashPw(body.newPassword));
+  return { ok: true };
+}
+
+/** Super-user: block or unblock any investor's ability to log in. */
+function adminSetBlocked(body) {
+  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  if (!admin.ok) return admin;
+  const users = getUsersSheet();
+  const u = findRow(users, body.targetEmail);
+  if (!u) return { ok: false, error: 'No such user account' };
+  if ((u.data[0] || '').toString().toLowerCase() === (body.adminEmail || '').toLowerCase()) {
+    return { ok: false, error: "You can't block your own account" };
+  }
+  users.getRange(u.row, 4).setValue(!!body.blocked);
+  return { ok: true };
+}
+
+/** Super-user: post a banner message to one investor's email, or 'ALL' for everyone. */
+function adminBroadcast(body) {
+  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  if (!admin.ok) return admin;
+  if (!body.message || !body.message.trim()) return { ok: false, error: 'Message text is required' };
+  const sheet = getMessagesSheet();
+  const id = 'm_' + Utilities.getUuid().slice(0, 8);
+  sheet.appendRow([id, body.target || 'ALL', body.message.trim(), new Date(), true]);
+  return { ok: true, id };
+}
+
+function adminListMessages(body) {
+  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  if (!admin.ok) return admin;
+  const data = getMessagesSheet().getDataRange().getValues();
+  const msgs = [];
+  for (let i = 1; i < data.length; i++) {
+    const d = data[i];
+    if (!d[0]) continue;
+    msgs.push({ id: d[0], target: d[1], message: d[2], createdAt: d[3], active: d[4] === true || d[4] === 'TRUE' });
+  }
+  msgs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return { ok: true, messages: msgs };
+}
+
+function adminDeleteMessage(body) {
+  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  if (!admin.ok) return admin;
+  const sheet = getMessagesSheet();
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] === body.id) { sheet.getRange(i + 1, 5).setValue(false); return { ok: true }; }
+  }
+  return { ok: false, error: 'Message not found' };
+}
+
+/** Returns the active banner message(s) visible to a given investor: firm-wide "ALL" plus any addressed to them. */
+function getMessages(email) {
+  const data = getMessagesSheet().getDataRange().getValues();
+  const msgs = [];
+  for (let i = 1; i < data.length; i++) {
+    const d = data[i];
+    if (!d[0]) continue;
+    const active = d[4] === true || d[4] === 'TRUE';
+    if (!active) continue;
+    const target = (d[1] || 'ALL').toString();
+    if (target === 'ALL' || target.toLowerCase() === (email || '').toLowerCase()) {
+      msgs.push({ id: d[0], message: d[2], createdAt: d[3] });
+    }
+  }
+  msgs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return { ok: true, messages: msgs };
+}
+
+/** Investor submits a New Investment / Additional Purchase request, which lands with the advisor. */
+function submitPurchaseRequest(body) {
+  if (!authOk(body.email, body.password)) return { ok: false, error: 'Not authenticated' };
+  const sheet = getRequestsSheet();
+  const id = 'r_' + Utilities.getUuid().slice(0, 8);
+  sheet.appendRow([id, body.email, body.name || '', body.type || 'New Investment', body.fundName || '', Number(body.amount || 0), body.notes || '', 'Pending', new Date()]);
+  return { ok: true, id };
+}
+
+function adminListRequests(body) {
+  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  if (!admin.ok) return admin;
+  const data = getRequestsSheet().getDataRange().getValues();
+  const requests = [];
+  for (let i = 1; i < data.length; i++) {
+    const d = data[i];
+    if (!d[0]) continue;
+    requests.push({ id: d[0], email: d[1], name: d[2], type: d[3], fundName: d[4], amount: d[5], notes: d[6], status: d[7], createdAt: d[8] });
+  }
+  requests.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return { ok: true, requests };
+}
+
+function adminUpdateRequestStatus(body) {
+  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  if (!admin.ok) return admin;
+  const sheet = getRequestsSheet();
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] === body.id) { sheet.getRange(i + 1, 8).setValue(body.status || 'Pending'); return { ok: true }; }
+  }
+  return { ok: false, error: 'Request not found' };
+}
+
+/**
+ * Looks up the latest AMFI NAV for a list of fund names (used by the investor Dashboard and AUM roll-up).
  */
 function lookupNavs(names) {
   if (!names || names.length === 0) return { ok: true, navs: {} };
@@ -224,22 +449,12 @@ function lookupNavs(names) {
   names.forEach(name => {
     const key = (name || '').toLowerCase().trim();
     if (byName.hasOwnProperty(key)) { navs[name] = byName[key]; return; }
-    // fallback: fuzzy substring match if an exact match isn't found
     const found = Object.keys(byName).find(k => k.indexOf(key) !== -1 || key.indexOf(k) !== -1);
     navs[name] = found ? byName[found] : null;
   });
   return { ok: true, navs };
 }
 
-/**
- * Pulls top domestic and international business headlines from RSS feeds and caches
- * the result for 15 minutes (avoids re-fetching every single login while still feeling fresh).
- * Domestic sources: Economic Times (Markets + Mutual Funds), Zee News Business.
- * International source: Economic Times World/International.
- * Add more feeds to DOMESTIC_FEEDS / INTL_FEEDS below as you find reliable RSS URLs
- * (e.g. a working CNBC-TV18/Awaaz feed) — each is fetched independently, so one
- * broken URL won't break the others.
- */
 const DOMESTIC_FEEDS = [
   { source: 'Economic Times', url: 'https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms' },
   { source: 'Economic Times MF', url: 'https://economictimes.indiatimes.com/mf/rssfeeds/359241701.cms' },
@@ -257,7 +472,7 @@ function getNews() {
   const domestic = fetchFeedItems(DOMESTIC_FEEDS).slice(0, 5);
   const international = fetchFeedItems(INTL_FEEDS).slice(0, 5);
   const result = { domestic, international };
-  cache.put('fc_news', JSON.stringify(result), 900); // 15 minutes
+  cache.put('fc_news', JSON.stringify(result), 900);
   return { ok: true, ...result, cached: false };
 }
 
@@ -279,9 +494,7 @@ function fetchFeedItems(feeds) {
         const pubDate = pubDateRaw ? new Date(pubDateRaw) : new Date(0);
         if (title) items.push({ title, link, source: feed.source, pubDate: pubDate.getTime() });
       });
-    } catch (e) {
-      // skip this feed silently — one bad source shouldn't break the rest
-    }
+    } catch (e) { /* skip broken feed */ }
   });
   items.sort((a, b) => b.pubDate - a.pubDate);
   return items;
@@ -289,7 +502,6 @@ function fetchFeedItems(feeds) {
 
 /**
  * Sends an email to every investor whose next SIP due date is exactly 2 days away.
- * Not run automatically — call setupDailyReminderTrigger() once to schedule it daily.
  */
 function sendSipReminders() {
   const sheet = getClientsSheet();

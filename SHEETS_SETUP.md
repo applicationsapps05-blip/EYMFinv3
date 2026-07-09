@@ -8,8 +8,11 @@ the raw data. Takes about 10 minutes.
 1. Go to https://sheets.google.com, create a **Blank spreadsheet**.
 2. Rename it (e.g. "EYM Financial — Client Data").
 3. Create two tabs (right-click the bottom tab bar > rename, or "+" to add):
-   - **Users** — in row 1, add headers: `Email` | `PasswordHash` | `IsAdvisor`
-   - **Clients** — in row 1, add headers: `Email` | `Name` | `Phone` | `PAN` | `DOB` | `RiskScore` | `RiskDate` | `SIPsJSON` | `UpdatedAt`
+   - **Users** — in row 1, add headers: `Email` | `PasswordHash` | `IsAdvisor` | `Blocked`
+   - **Clients** — in row 1, add headers: `Email` | `Name` | `Phone` | `PAN` | `DOB` | `RiskScore` | `RiskDate` | `SIPsJSON` | `UpdatedAt` | `HoldingsJSON`
+
+Three more tabs — **Funds**, **Messages**, and **Requests** — are created automatically
+the first time they're needed, so you don't need to add them by hand.
 
 ## 2. Add the backend script
 1. In the Sheet, go to **Extensions > Apps Script**.
@@ -41,12 +44,35 @@ Replace it with the URL you copied.
 Upload the updated files to your GitHub repo (same as before). GitHub Pages
 will redeploy automatically within a minute or two.
 
-## 6. Create your advisor account
+## 6. Create your super-user (advisor / admin) account
 1. Open the live site, click **Create Account**, sign up with your own email.
 2. Open the Google Sheet, go to the **Users** tab, find your row, and change
    `IsAdvisor` from `false`/blank to `TRUE`.
-3. Reload the app and log in again — you'll now see the **Advisor Dashboard**
-   tab listing every client.
+3. Reload the app and log in again — you'll now see three extra tabs:
+   - **Admin Console** — pick any investor from the dropdown, then add a SIP
+     on their behalf, upload their CAS holdings, reset their password,
+     block/unblock their login, and post a banner message to one or all
+     investors.
+   - **AUM** — firm-wide total invested / present value, with drill-down by
+     investor and by fund.
+   - **Purchase Requests** — every "New Investment / Additional Purchase"
+     request investors submit from their own **Invest** tab, with a status
+     dropdown (Pending / Contacted / Completed / Rejected).
+
+## Notes on the CAS upload
+There's no universal machine-readable format for CAMS/KFintech Consolidated
+Account Statements, so this app doesn't parse a CAS PDF automatically.
+Instead, the Admin Console gives you a fast row-by-row entry table (fund
+name, folio, type, units, NAV, invested value) — open the investor's CAS PDF
+next to it and copy the figures across per scheme. "Replace" overwrites their
+holdings list; "Append" adds to what's already there.
+
+## A note on "instant" updates
+Because this is a serverless Sheets backend (no live database connection),
+an investor's own browser tab polls for updates automatically every ~25
+seconds while they're on the Dashboard, and always re-fetches on login — so
+a SIP or CAS you add on their behalf will appear for them within moments,
+without them needing to do anything.
 
 ## How it works
 - Each investor's data lives in one row of the **Clients** tab.
