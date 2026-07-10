@@ -59,22 +59,6 @@ will redeploy automatically within a minute or two.
      request investors submit from their own **Invest** tab, with a status
      dropdown (Pending / Contacted / Completed / Rejected).
 
-## Confirming your deployment is actually up to date
-"Unknown action" errors almost always mean Code.gs was edited and saved, but the
-live Web App is still running an older version — Apps Script does NOT auto-update
-a deployment when you save; you must explicitly create a new version.
-
-The Admin Console now shows a **live "Backend deployment" banner** at the top —
-it calls the deployed script and reports back its version string. After you
-redeploy, refresh the app and check that banner matches the version noted in
-Code.gs's header comment. If it's stale or unreachable, redeploy:
-**Deploy > Manage deployments > pencil icon > Version: New version > Deploy.**
-
-## Self-service CAS upload
-Every investor now has an "Update my portfolio from a CAS statement" section on
-their own **Invest** tab — same PDF importer as the Admin Console, scoped to
-their own account. They don't need advisor help to keep their holdings current.
-
 ## Notes on the CAS upload
 The Admin Console now has a real PDF importer: upload the investor's Consolidated
 Account Statement (from MF Central, CAMS, or KFintech) and it auto-fills the

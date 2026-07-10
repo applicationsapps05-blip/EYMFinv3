@@ -543,16 +543,7 @@ async function fetchAllClients(force){
 async function renderAdvisor(){
   const c = document.getElementById('mfContent');
   let html = `<h2>Admin Console <span class="badge active-status" style="margin-left:4px">Super User</span></h2>
-  <div class="mf-sub">Act on behalf of any investor: add SIPs, upload CAS holdings, reset passwords, block logins, and post banner messages.</div>
-  <div id="deployVersionBox" class="notice" style="margin-bottom:14px">Checking backend deployment version…</div>`;
-
-  api('version', {}).then(res => {
-    const box = document.getElementById('deployVersionBox');
-    if(box) box.innerHTML = `<strong>Backend deployment:</strong> ${esc(res.version)} — if a feature errors with "Unknown action", this version is stale; redeploy (Apps Script &rarr; Deploy &rarr; Manage deployments &rarr; edit &rarr; New version &rarr; Deploy).`;
-  }).catch(() => {
-    const box = document.getElementById('deployVersionBox');
-    if(box){ box.className = 'notice warn'; box.innerHTML = `<strong>Couldn't reach the backend at all.</strong> Check APPS_SCRIPT_URL in index.html and that the deployment is set to "Anyone" access.`; }
-  });
+  <div class="mf-sub">Act on behalf of any investor: add SIPs, upload CAS holdings, reset passwords, block logins, and post banner messages.</div>`;
 
   let clients = [];
   try { clients = await fetchAllClients(); }
@@ -718,13 +709,13 @@ async function renderAdvisor(){
   };
 }
 
-function renderCasRows(boxId){
-  const box = document.getElementById(boxId || 'casRows');
+function renderCasRows(){
+  const box = document.getElementById('casRows');
   if(!box) return;
-  if(box.children.length === 0) addCasRow(null, boxId);
+  if(box.children.length === 0) addCasRow();
 }
-function addCasRow(prefill, boxId){
-  const box = document.getElementById(boxId || 'casRows');
+function addCasRow(prefill){
+  const box = document.getElementById('casRows');
   if(!box) return;
   const row = document.createElement('div');
   row.className = 'cas-row';
@@ -740,67 +731,44 @@ function addCasRow(prefill, boxId){
   row.querySelector('.cas-remove').onclick = () => row.remove();
   box.appendChild(row);
 }
-function clearCasRows(boxId){
-  const box = document.getElementById(boxId || 'casRows');
+function clearCasRows(){
+  const box = document.getElementById('casRows');
   if(box) box.innerHTML = '';
-}
-function readCasRows(boxId){
-  const box = document.getElementById(boxId || 'casRows');
-  if(!box) return [];
-  return Array.from(box.querySelectorAll('.cas-row')).map(row => ({
-    fundName: row.querySelector('.cas-fund').value.trim(),
-    folio: row.querySelector('.cas-folio').value.trim(),
-    schemeType: row.querySelector('.cas-type').value,
-    units: Number(row.querySelector('.cas-units').value || 0),
-    nav: Number(row.querySelector('.cas-nav').value || 0),
-    investedValue: Number(row.querySelector('.cas-invested').value || 0)
-  })).filter(r => r.fundName);
 }
 
 // ---- CAS PDF parsing (client-side, using pdf.js) ----
 // Reconstructs table rows from the PDF's actual text positions (x/y), since the
 // underlying content stream is NOT in visual reading order for these statements.
-// Different PDF generators produce slightly different line-spacing, so this tries
-// several clustering tolerances and a merged-text fallback rather than assuming one works.
-async function extractPdfItemsByPage(file, password){
+async function pdfToLines(file, password){
   const buf = await file.arrayBuffer();
   const opts = { data: buf };
   if(password) opts.password = password;
   const pdf = await pdfjsLib.getDocument(opts).promise;
-  const pages = [];
+  const lines = [];
   for(let p = 1; p <= pdf.numPages; p++){
     const page = await pdf.getPage(p);
     const content = await page.getTextContent();
     const items = content.items
       .map(it => ({ str: it.str, x: it.transform[4], y: it.transform[5] }))
       .filter(it => it.str.trim().length > 0);
-    pages.push(items);
+    items.sort((a,b) => (b.y - a.y) || (a.x - b.x));
+    let currentY = null, currentLine = [];
+    const pushLine = () => { if(currentLine.length) lines.push(currentLine.map(it=>it.str).join(' ').replace(/\s+/g,' ').trim()); };
+    items.forEach(it => {
+      if(currentY === null || Math.abs(it.y - currentY) > 3){
+        pushLine();
+        currentLine = [it];
+        currentY = it.y;
+      } else {
+        currentLine.push(it);
+      }
+    });
+    pushLine();
   }
-  return pages;
-}
-
-function clusterItemsToLines(items, tolerance){
-  const sorted = items.slice().sort((a,b) => (b.y - a.y) || (a.x - b.x));
-  const lines = [];
-  let currentY = null, currentLine = [];
-  const pushLine = () => { if(currentLine.length) lines.push(currentLine.map(it=>it.str).join(' ').replace(/\s+/g,' ').trim()); };
-  sorted.forEach(it => {
-    if(currentY === null || Math.abs(it.y - currentY) > tolerance){
-      pushLine();
-      currentLine = [it];
-      currentY = it.y;
-    } else {
-      currentLine.push(it);
-    }
-  });
-  pushLine();
   return lines;
 }
 
-// Deliberately NOT anchored to start/end of line — real-world extraction sometimes carries
-// stray leading/trailing characters, so we search for the pattern rather than demand an exact match.
-const CAS_ROW_RE = /(\d+(?:\/\d*)?)\s*(IN[A-Z0-9]{9,10})\s+([A-Z0-9]+)\s*-\s*(.+?)\s+([\d,]+\.\d+)\s+([\d,]+\.\d+)\s+(\d{2}-[A-Za-z]{3}-\d{4})\s+([\d,]+\.\d+)\s+([\d,]+\.\d+)\s+(KFINTECH|CAMS)/;
-const CAS_ROW_RE_G = new RegExp(CAS_ROW_RE.source, 'g');
+const CAS_ROW_RE = /^\s*(\d+(?:\/\d*)?)\s*(IN[A-Z0-9]{9,10})\s+([A-Z0-9]+)\s*-\s*(.+?)\s+([\d,]+\.\d+)\s+([\d,]+\.\d+)\s+(\d{2}-[A-Za-z]{3}-\d{4})\s+([\d,]+\.\d+)\s+([\d,]+\.\d+)\s+(KFINTECH|CAMS)\s*$/;
 
 function guessSchemeType(name){
   const n = name.toLowerCase();
@@ -812,86 +780,48 @@ function guessSchemeType(name){
   return 'Equity';
 }
 
-function holdingFromMatch(m){
-  const [, folio, isin, code, namePart, cost, units, navDate, nav, marketValue, registrar] = m;
-  const fundName = (code + ' - ' + namePart).replace(/\s+/g,' ').trim();
-  return {
-    folio: folio.trim(), isin, fundName, schemeType: guessSchemeType(fundName),
-    units: Number(units.replace(/,/g,'')), nav: Number(nav.replace(/,/g,'')),
-    investedValue: Number(cost.replace(/,/g,'')), marketValue: Number(marketValue.replace(/,/g,''))
-  };
-}
-
 function parseCasLines(lines){
   const holdings = [];
   lines.forEach(line => {
     const m = CAS_ROW_RE.exec(line);
-    if(m) holdings.push(holdingFromMatch(m));
+    if(!m) return;
+    const [, folio, isin, code, namePart, cost, units, navDate, nav, marketValue, registrar] = m;
+    const fundName = (code + ' - ' + namePart).replace(/\s+/g,' ').trim();
+    holdings.push({
+      folio: folio.trim(), isin, fundName, schemeType: guessSchemeType(fundName),
+      units: Number(units.replace(/,/g,'')), nav: Number(nav.replace(/,/g,'')),
+      investedValue: Number(cost.replace(/,/g,'')), marketValue: Number(marketValue.replace(/,/g,''))
+    });
   });
   return holdings;
 }
 
-function parseCasBlob(text){
-  const holdings = [];
-  let m;
-  CAS_ROW_RE_G.lastIndex = 0;
-  while((m = CAS_ROW_RE_G.exec(text)) !== null){
-    holdings.push(holdingFromMatch(m));
-  }
-  return holdings;
-}
 
-async function extractCasHoldings(file, password){
-  const pages = await extractPdfItemsByPage(file, password);
-  let best = { holdings: [], lines: [] };
+function wireAdminConsoleHandlers(sel){
+  const userSelect = document.getElementById('adminUserSelect');
+  if(userSelect) userSelect.onchange = () => { adminSelectedEmail = userSelect.value; renderAdvisor(); };
 
-  // Pass 1: try several line-clustering tolerances (different PDF generators space rows differently)
-  for(const tol of [3, 2, 4, 6, 8, 12]){
-    let allLines = [];
-    pages.forEach(items => { allLines = allLines.concat(clusterItemsToLines(items, tol)); });
-    const holdings = parseCasLines(allLines);
-    if(holdings.length > best.holdings.length){
-      best = { holdings, lines: allLines };
-    }
-    if(best.holdings.length > 0) break; // good enough, stop trying tolerances
-  }
+  const btnAddRow = document.getElementById('btnAddCasRow');
+  if(btnAddRow) btnAddRow.onclick = () => addCasRow();
 
-  // Pass 2: fallback — merge each page's reconstructed lines into one blob and scan globally.
-  // Catches cases where a row's fields landed just outside the per-line tolerance.
-  if(best.holdings.length === 0){
-    let blob = '';
-    pages.forEach(items => { blob += ' ' + clusterItemsToLines(items, 4).join(' '); });
-    const holdings = parseCasBlob(blob);
-    if(holdings.length > 0) best = { holdings, lines: best.lines };
-  }
-
-  return best; // { holdings, lines } — lines kept for on-screen diagnostics if holdings is empty
-}
-
-function wireCasPdfImporter(opts){
-  const btnParsePdf = document.getElementById(opts.buttonId);
-  if(!btnParsePdf) return;
-  btnParsePdf.onclick = async () => {
-    const fileInput = document.getElementById(opts.fileId);
-    const statusBox = document.getElementById(opts.statusId);
+  const btnParsePdf = document.getElementById('btnParseCasPdf');
+  if(btnParsePdf) btnParsePdf.onclick = async () => {
+    const fileInput = document.getElementById('casPdfFile');
+    const statusBox = document.getElementById('casPdfStatus');
     const file = fileInput.files[0];
     if(!file){ statusBox.innerHTML = `<div class="notice warn" style="margin:0">Choose a CAS PDF file first.</div>`; return; }
-    const password = document.getElementById(opts.passwordId).value.trim();
+    const password = document.getElementById('casPdfPassword').value.trim();
     btnParsePdf.disabled = true;
     statusBox.innerHTML = `<div class="mf-sub" style="margin:0">Reading PDF…</div>`;
     try {
-      const { holdings, lines } = await extractCasHoldings(file, password || undefined);
+      const lines = await pdfToLines(file, password || undefined);
+      const holdings = parseCasLines(lines);
       if(holdings.length === 0){
-        const sample = lines.slice(0, 12).map(l=>esc(l)).join('<br>');
-        statusBox.innerHTML = `<div class="notice warn" style="margin:0">
-          <strong>Couldn't find any holdings rows in this PDF.</strong> It may be a different statement layout than expected.
-          You can still fill rows in manually below. If you'd like this fixed, copy the text below and send it to support:
-          <div style="margin-top:8px;padding:8px;background:rgba(0,0,0,0.04);border-radius:4px;font-family:'IBM Plex Mono',monospace;font-size:10px;max-height:140px;overflow-y:auto">${sample || '(no text could be extracted at all — the PDF may be a scanned image, not real text)'}</div>
-        </div>`;
+        statusBox.innerHTML = `<div class="notice warn" style="margin:0">Couldn't find any holdings rows in this PDF. It may be a different statement format — you can still fill rows in manually below.</div>`;
       } else {
-        clearCasRows(opts.rowsBoxId);
-        holdings.forEach(h => addCasRow(h, opts.rowsBoxId));
-        statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Found ${holdings.length} holding${holdings.length>1?'s':''}.</strong> Review the rows below (fund names may be abbreviated — edit if needed), then click "Upload".</div>`;
+        clearCasRows();
+        holdings.forEach(h => addCasRow(h));
+        statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Found ${holdings.length} holding${holdings.length>1?'s':''}.</strong> Review the rows below (fund names may be abbreviated — edit if needed), then click "Upload CAS".</div>`;
       }
     } catch(e){
       const msg = /password/i.test(e.message||'') || (e.name==='PasswordException')
@@ -901,16 +831,6 @@ function wireCasPdfImporter(opts){
     }
     btnParsePdf.disabled = false;
   };
-}
-
-function wireAdminConsoleHandlers(sel){
-  const userSelect = document.getElementById('adminUserSelect');
-  if(userSelect) userSelect.onchange = () => { adminSelectedEmail = userSelect.value; renderAdvisor(); };
-
-  const btnAddRow = document.getElementById('btnAddCasRow');
-  if(btnAddRow) btnAddRow.onclick = () => addCasRow();
-
-  wireCasPdfImporter({ fileId:'casPdfFile', passwordId:'casPdfPassword', buttonId:'btnParseCasPdf', statusId:'casPdfStatus', rowsBoxId:'casRows' });
 
   const btnAdminAddSip = document.getElementById('btnAdminAddSip');
   if(btnAdminAddSip) btnAdminAddSip.onclick = async () => {
@@ -1500,50 +1420,9 @@ async function renderInvest(){
   </div>`;
 
   html += `<div id="myRequestsBox"><div class="mf-sub">Loading your past requests…</div></div>`;
-
-  html += `<div class="mf-card">
-    <h2 style="font-size:14px;margin:0 0 4px">Update my portfolio from a CAS statement</h2>
-    <div class="mf-sub" style="margin-bottom:8px">Upload your Consolidated Account Statement PDF from MF Central/CAMS/KFintech and it'll auto-fill the rows below — check them, then confirm to update your Dashboard.</div>
-    <div class="mf-row" style="align-items:flex-end">
-      <div class="mf-field" style="min-width:220px"><label>CAS PDF file</label><input type="file" id="myCasPdfFile" accept="application/pdf"></div>
-      <div class="mf-field" style="min-width:160px"><label>PDF password <span style="text-transform:none;letter-spacing:0">(if locked)</span></label><input type="password" id="myCasPdfPassword" placeholder="e.g. PAN in caps"></div>
-      <button class="mf-btn ghost sm" id="myBtnParseCasPdf" style="margin-bottom:12px">Parse PDF &amp; Fill Rows</button>
-    </div>
-    <div id="myCasPdfStatus" style="margin-bottom:10px"></div>
-    <div id="myCasRows"></div>
-    <div style="display:flex;gap:8px;margin:8px 0">
-      <button class="mf-btn ghost sm" id="myBtnAddCasRow">+ Add fund row</button>
-      <label style="display:flex;align-items:center;gap:6px;font-size:11.5px"><input type="checkbox" id="myCasAppendMode"> Append to existing holdings (unchecked = replace)</label>
-    </div>
-    <button class="mf-btn gold" id="myBtnUploadCas">Update my portfolio</button>
-    <div id="myCasStatus" style="margin-top:8px"></div>
-  </div>`;
-
   c.innerHTML = html;
 
   wireFundAutocomplete('req-fund', 'req-fund-results', null);
-  renderCasRows('myCasRows');
-  wireCasPdfImporter({ fileId:'myCasPdfFile', passwordId:'myCasPdfPassword', buttonId:'myBtnParseCasPdf', statusId:'myCasPdfStatus', rowsBoxId:'myCasRows' });
-
-  const myBtnAddCasRow = document.getElementById('myBtnAddCasRow');
-  if(myBtnAddCasRow) myBtnAddCasRow.onclick = () => addCasRow(null, 'myCasRows');
-
-  const myBtnUploadCas = document.getElementById('myBtnUploadCas');
-  if(myBtnUploadCas) myBtnUploadCas.onclick = async () => {
-    const statusBox = document.getElementById('myCasStatus');
-    const rows = readCasRows('myCasRows');
-    if(rows.length === 0){ statusBox.innerHTML = `<div class="notice warn" style="margin:0">Add at least one fund row with a name.</div>`; return; }
-    const mode = document.getElementById('myCasAppendMode').checked ? 'append' : 'replace';
-    myBtnUploadCas.disabled = true;
-    try {
-      const res = await api('uploadCas', { email: currentUser.email, password: currentUser.password, holdings: rows, mode });
-      statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Updated.</strong> ${res.count} scheme(s) saved to your portfolio — check your Dashboard.</div>`;
-      toast('Portfolio updated — showing your Dashboard');
-      state.activeTab = 'dashboard';
-      await load();
-    } catch(e){ statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message||'')}</div>`; }
-    myBtnUploadCas.disabled = false;
-  };
 
   document.getElementById('btnSubmitRequest').onclick = async () => {
     const type = document.getElementById('req-type').value;

@@ -15,19 +15,12 @@
  * post banner messages, view firm-wide AUM, and action New Purchase Requests.
  */
 
-// Bump this whenever you paste in new code. The Admin Console shows this live so you can
-// always confirm the deployed Web App is actually running what you just pasted — "Unknown
-// action" errors almost always mean you edited Code.gs but didn't create a NEW deployment
-// version (Deploy > Manage deployments > pencil icon > Version: New version > Deploy).
-const SCRIPT_VERSION = 'v7-2026-07-10';
-
 function doPost(e) {
   let result;
   try {
     const body = JSON.parse(e.postData.contents);
     const action = body.action;
-    if (action === 'version') result = { ok: true, version: SCRIPT_VERSION };
-    else if (action === 'signup') result = signup(body.email, body.password);
+    if (action === 'signup') result = signup(body.email, body.password);
     else if (action === 'login') result = login(body.email, body.password);
     else if (action === 'saveData') result = saveData(body);
     else if (action === 'loadData') result = loadData(body.email, body.password);
@@ -40,7 +33,6 @@ function doPost(e) {
     else if (action === 'setupReminderTrigger') result = setupDailyReminderTrigger();
     else if (action === 'getMessages') result = getMessages(body.email);
     else if (action === 'submitPurchaseRequest') result = submitPurchaseRequest(body);
-    else if (action === 'uploadCas') result = uploadOwnCas(body);
     // ---- super-user / admin actions ----
     else if (action === 'adminAddSip') result = adminAddSip(body);
     else if (action === 'adminUploadCas') result = adminUploadCas(body);
@@ -51,7 +43,7 @@ function doPost(e) {
     else if (action === 'adminListMessages') result = adminListMessages(body);
     else if (action === 'adminListRequests') result = adminListRequests(body);
     else if (action === 'adminUpdateRequestStatus') result = adminUpdateRequestStatus(body);
-    else result = { ok: false, error: 'Unknown action: ' + action + ' (this deployment is ' + SCRIPT_VERSION + ' — if this action should exist, you likely need to redeploy a new version)' };
+    else result = { ok: false, error: 'Unknown action' };
   } catch (err) {
     result = { ok: false, error: err.message };
   }
@@ -369,31 +361,7 @@ function adminAddSip(body) {
 }
 
 /**
- * Self-service: an investor uploads/appends their OWN CAS holdings (no admin rights needed).
- * Same shape as adminUploadCas but scoped to the caller's own account.
- */
-function uploadOwnCas(body) {
-  if (!authOk(body.email, body.password)) return { ok: false, error: 'Not authenticated' };
-  const sheet = getClientsSheet();
-  const existing = clientRowFor(sheet, body.email);
-  if (!existing) return { ok: false, error: 'Account not found' };
-  let holdings = (body.mode === 'append') ? (existing.data[9] ? JSON.parse(existing.data[9]) : []) : [];
-  const incoming = (body.holdings || []).map(h => ({
-    id: 'h_' + Utilities.getUuid().slice(0, 8),
-    fundName: h.fundName || '',
-    folio: h.folio || '',
-    schemeType: h.schemeType || 'Equity',
-    units: Number(h.units || 0),
-    nav: Number(h.nav || 0),
-    investedValue: Number(h.investedValue || 0)
-  }));
-  holdings = holdings.concat(incoming);
-  sheet.getRange(existing.row, 10).setValue(JSON.stringify(holdings));
-  sheet.getRange(existing.row, 9).setValue(new Date());
-  return { ok: true, count: incoming.length };
-}
-
-/** Super-user: upload/append CAS (Consolidated Account Statement) holdings on behalf of any investor.
+ * Super-user: upload/append CAS (Consolidated Account Statement) holdings on behalf of any investor.
  * Expects body.holdings = [{ fundName, folio, schemeType, units, nav, investedValue }]
  * mode: "replace" (default) overwrites the investor's holdings list, "append" adds to it.
  */
