@@ -28,6 +28,7 @@ function doPost(e) {
     else if (action === 'searchFunds') result = searchFunds(body.query);
     else if (action === 'refreshFunds') result = refreshFundList();
     else if (action === 'lookupNavs') result = lookupNavs(body.names || []);
+    else if (action === 'computeSipAccumulation') result = computeSipAccumulation(body);
     else if (action === 'getNews') result = getNews();
     else if (action === 'setupReminderTrigger') result = setupDailyReminderTrigger();
     else if (action === 'getMessages') result = getMessages(body.email);
@@ -119,6 +120,77 @@ function refreshFundList() {
   return { ok: true, count: rows.length };
 }
 
+/**
+ * Computes the TRUE present value of a SIP: simulates every installment against the
+ * scheme's actual historical NAV on that date (via mfapi.in, a free public historical
+ * NAV source for Indian mutual funds), and sums the real units bought each time.
+ * This replaces guessing from a manually-entered "units held" number.
+ * Cached per scheme+SIP terms for 6 hours since historical NAV only changes once a day.
+ */
+function computeSipAccumulation(body) {
+  const schemeCode = body.schemeCode;
+  const startDate = body.startDate;
+  const frequency = body.frequency;
+  const amount = Number(body.amount || 0);
+  if (!schemeCode || !startDate || !amount) return { ok: false, error: 'Missing schemeCode/startDate/amount' };
+
+  const cacheKey = 'sipacc_' + schemeCode + '_' + startDate + '_' + frequency + '_' + amount + '_' + Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'Etc/UTC', 'yyyy-MM-dd');
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get(cacheKey);
+  if (cached) return JSON.parse(cached);
+
+  let history;
+  try {
+    const res = UrlFetchApp.fetch('https://api.mfapi.in/mf/' + schemeCode, { muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200) return { ok: false, error: 'Historical NAV service unavailable (HTTP ' + res.getResponseCode() + ')' };
+    history = JSON.parse(res.getContentText());
+  } catch (e) {
+    return { ok: false, error: 'Could not reach historical NAV service: ' + e.message };
+  }
+  const series = (history.data || []).map(d => ({ date: parseMfapiDate_(d.date), nav: Number(d.nav) }))
+    .filter(d => d.date && !isNaN(d.nav))
+    .sort((a, b) => a.date - b.date); // ascending
+  if (series.length === 0) return { ok: false, error: 'No historical NAV data for this scheme' };
+
+  const navOnOrBefore = (targetDate) => {
+    // series is ascending; find the latest entry on or before targetDate (markets closed weekends/holidays)
+    let lo = 0, hi = series.length - 1, ans = null;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (series[mid].date <= targetDate) { ans = series[mid]; lo = mid + 1; }
+      else hi = mid - 1;
+    }
+    return ans ? ans.nav : series[0].nav;
+  };
+
+  const start = new Date(startDate);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  let totalUnits = 0, installments = 0, d = new Date(start), guard = 0;
+  while (d <= today && guard < 3000) {
+    const nav = navOnOrBefore(d);
+    if (nav > 0) { totalUnits += amount / nav; installments++; }
+    if (frequency === 'Daily') d.setDate(d.getDate() + 1);
+    else if (frequency === 'Weekly') d.setDate(d.getDate() + 7);
+    else if (frequency === 'Quarterly') d.setMonth(d.getMonth() + 3);
+    else d.setMonth(d.getMonth() + 1);
+    guard++;
+  }
+  const latestNav = series[series.length - 1].nav;
+  const result = {
+    ok: true, totalUnits, installments, totalInvested: installments * amount,
+    latestNav, latestDate: Utilities.formatDate(series[series.length - 1].date, Session.getScriptTimeZone() || 'Etc/UTC', 'yyyy-MM-dd')
+  };
+  cache.put(cacheKey, JSON.stringify(result), 6 * 3600);
+  return result;
+}
+
+function parseMfapiDate_(str) {
+  // mfapi.in dates come as "dd-mm-yyyy"
+  const m = /^(\d{2})-(\d{2})-(\d{4})$/.exec(str || '');
+  if (!m) return null;
+  return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+}
+
 function fundsNeedRefresh() {
   const sheet = getFundsSheet();
   const lastRow = sheet.getLastRow();
@@ -142,7 +214,7 @@ function searchFunds(query) {
   for (let i = 1; i < data.length && matches.length < 40; i++) {
     const name = (data[i][1] || '').toString();
     if (name.toLowerCase().indexOf(q) !== -1) {
-      matches.push({ name: name, nav: data[i][2] || '' });
+      matches.push({ name: name, nav: data[i][2] || '', code: data[i][0] || '' });
     }
   }
   return { ok: true, funds: matches };

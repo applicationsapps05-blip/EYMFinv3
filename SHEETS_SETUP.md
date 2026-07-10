@@ -60,12 +60,30 @@ will redeploy automatically within a minute or two.
      dropdown (Pending / Contacted / Completed / Rejected).
 
 ## Notes on the CAS upload
-There's no universal machine-readable format for CAMS/KFintech Consolidated
-Account Statements, so this app doesn't parse a CAS PDF automatically.
-Instead, the Admin Console gives you a fast row-by-row entry table (fund
-name, folio, type, units, NAV, invested value) — open the investor's CAS PDF
-next to it and copy the figures across per scheme. "Replace" overwrites their
-holdings list; "Append" adds to what's already there.
+The Admin Console now has a real PDF importer: upload the investor's Consolidated
+Account Statement (from MF Central, CAMS, or KFintech) and it auto-fills the
+holdings table below (folio, scheme, units, NAV, invested value) by reading the
+PDF's actual text positions — no manual typing needed. Scheme names may come
+through slightly abbreviated (wrapped continuation lines are dropped); edit any
+row before confirming. If the PDF is password-protected, enter the password
+(often the investor's PAN in capitals) in the field provided. "Replace"
+overwrites their holdings list; "Append" adds to what's already there.
+
+## Notes on present value accuracy
+For SIPs added by picking a fund from the AMFI search box, the app now looks up
+that scheme's actual historical NAV (via the free public API at api.mfapi.in)
+and simulates every installment for real — so "present value" is genuinely
+"total units actually bought on each SIP date × today's NAV," not a manually
+maintained units field. You'll see "✓ units from actual NAV history" on those
+rows. SIPs added before this feature, or where a fund was typed in manually
+without picking a search result, fall back to the old estimate (manually
+entered units) and are labeled as such. CAS-imported holdings always use the
+exact units/value from the statement, since that's already an exact snapshot.
+
+The Dashboard's "Future Projection" now also shows explicit Year 10 and Year
+20 rupee figures (not just the chart), using the standard continuing-SIP
+future value formula at an assumed 12% p.a. — clearly labeled as illustrative,
+not a guarantee.
 
 ## A note on "instant" updates
 Because this is a serverless Sheets backend (no live database connection),
