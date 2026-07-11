@@ -96,6 +96,31 @@ without picking a search result, fall back to the old estimate (manually
 entered units) and are labeled as such. CAS-imported holdings always use the
 exact units/value from the statement, since that's already an exact snapshot.
 
+Every time the Dashboard is opened (and every ~25s while it's on screen), the
+app re-runs this simulation up to *today's* date, so units/value/gain keep
+climbing on their own as each SIP installment date passes — nobody has to go
+back in and edit anything.
+
+### Entering a SIP that's already been running for a while
+Two ways to add a SIP, both on the same form:
+- **Pure auto mode** — enter Start date, amount, frequency and leave the "As
+  of date / Invested till then / Market value as of then" fields blank. The
+  engine derives the *entire* history from Start date to today off real NAVs.
+  Best for funds with clean, complete NAV history going all the way back.
+- **Hybrid / as-of mode** — if you already know what the SIP was worth on a
+  given date (e.g. from the client's last CAS or statement), fill in "As of
+  date", "Invested till that date (₹)" and "Market value as of that date
+  (₹)" instead. The app converts that market value into units at that date's
+  real NAV, then simulates only the *new* installments from the day after
+  that date through today, adding them on top. This avoids re-deriving a long
+  or messy purchase history and still keeps updating automatically as new SIP
+  dates pass. Rows using this mode are labeled "✓ opening value as of
+  <date> + N auto-SIP installment(s) since".
+
+The plain "Total invested till date (₹)" field (without an As-of date) is a
+manual override for the *invested* figure only — it does not change how units
+are computed, and is unrelated to the as-of snapshot fields.
+
 The Dashboard's "Future Projection" now also shows explicit Year 10 and Year
 20 rupee figures (not just the chart), using the standard continuing-SIP
 future value formula at an assumed 12% p.a. — clearly labeled as illustrative,

@@ -634,7 +634,13 @@ async function renderAdvisor(){
       <div class="mf-field"><label>Present NAV (₹)</label><input id="admin-sip-nav" type="number" min="0" step="0.01"></div>
       <div class="mf-field"><label>Units held</label><input id="admin-sip-units" type="number" min="0" step="0.001"></div>
       <div class="mf-field"><label>Folio number</label><input id="admin-sip-folio"></div>
-      <div class="mf-field"><label>Total invested till date (₹)</label><input id="admin-sip-invested" type="number" min="0"></div>
+      <div class="mf-field"><label>Total invested till date (₹) <span style="text-transform:none;letter-spacing:0">optional override</span></label><input id="admin-sip-invested" type="number" min="0"></div>
+    </div>
+    <div class="mf-sub" style="margin:2px 0 6px"><strong>Already running SIP?</strong> Give a snapshot from the client's last statement instead of re-deriving the full history — the engine auto-adds every installment from that date forward using real NAVs. Leave blank to compute from Start date instead.</div>
+    <div class="mf-row">
+      <div class="mf-field"><label>As of date</label><input id="admin-sip-asof-date" type="date"></div>
+      <div class="mf-field"><label>Invested till that date (₹)</label><input id="admin-sip-asof-invested" type="number" min="0"></div>
+      <div class="mf-field"><label>Market value as of that date (₹)</label><input id="admin-sip-asof-value" type="number" min="0"></div>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
       <button class="mf-btn gold" id="btnAdminAddSip">Add SIP for this investor</button>
@@ -981,7 +987,10 @@ function wireAdminConsoleHandlers(sel){
       nav: Number(document.getElementById('admin-sip-nav').value||0), units: Number(document.getElementById('admin-sip-units').value||0),
       folio: document.getElementById('admin-sip-folio').value.trim(),
       investedTotal: document.getElementById('admin-sip-invested').value ? Number(document.getElementById('admin-sip-invested').value) : null,
-      schemeCode: document.getElementById('admin-sip-code').value || null
+      schemeCode: document.getElementById('admin-sip-code').value || null,
+      asOfDate: document.getElementById('admin-sip-asof-date').value || null,
+      asOfInvested: document.getElementById('admin-sip-asof-invested').value ? Number(document.getElementById('admin-sip-asof-invested').value) : null,
+      asOfMarketValue: document.getElementById('admin-sip-asof-value').value ? Number(document.getElementById('admin-sip-asof-value').value) : null
     };
     btnAdminAddSip.disabled = true;
     try {
@@ -998,7 +1007,7 @@ function wireAdminConsoleHandlers(sel){
 
   function resetAdminSipForm(){
     document.getElementById('admin-sip-editing-id').value = '';
-    ['admin-sip-fund','admin-sip-code','admin-sip-amount','admin-sip-start','admin-sip-nav','admin-sip-units','admin-sip-folio','admin-sip-invested'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+    ['admin-sip-fund','admin-sip-code','admin-sip-amount','admin-sip-start','admin-sip-nav','admin-sip-units','admin-sip-folio','admin-sip-invested','admin-sip-asof-date','admin-sip-asof-invested','admin-sip-asof-value'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
     document.getElementById('admin-sip-type').value = 'Equity';
     document.getElementById('admin-sip-freq').value = 'Monthly';
     document.getElementById('adminSipFormTitle').textContent = `3 · Add a SIP for ${sel.name||sel.email}`;
@@ -1021,6 +1030,9 @@ function wireAdminConsoleHandlers(sel){
       document.getElementById('admin-sip-units').value = sip.units || '';
       document.getElementById('admin-sip-folio').value = sip.folio || '';
       document.getElementById('admin-sip-invested').value = (sip.investedTotal ?? '') === null ? '' : (sip.investedTotal ?? '');
+      document.getElementById('admin-sip-asof-date').value = sip.asOfDate ? String(sip.asOfDate).slice(0,10) : '';
+      document.getElementById('admin-sip-asof-invested').value = (sip.asOfInvested ?? '') === null ? '' : (sip.asOfInvested ?? '');
+      document.getElementById('admin-sip-asof-value').value = (sip.asOfMarketValue ?? '') === null ? '' : (sip.asOfMarketValue ?? '');
       document.getElementById('adminSipFormTitle').textContent = `3 · Edit SIP — ${sip.fundName} (${sel.name||sel.email})`;
       document.getElementById('btnAdminAddSip').textContent = 'Save changes to this SIP';
       document.getElementById('btnAdminCancelEditSip').style.display = '';
@@ -1229,8 +1241,8 @@ async function renderRequests(){
 function estimateInvested(sip){
   if(sip.investedTotal) return Number(sip.investedTotal);
   const start = new Date(sip.startDate);
-  if(isNaN(start)) return Number(sip.amount||0);
   const today = new Date();
+  if(isNaN(start) || start > today) return 0; // no installment date has occurred yet
   let installments = 1, d = new Date(start);
   const advance = () => {
     if(sip.frequency === 'Daily') d.setDate(d.getDate()+1);
@@ -1262,14 +1274,20 @@ async function computePositions(sips, holdings){
     // not a manually-entered "units" figure, whenever we have a scheme code to look up real history.
     if(s.schemeCode){
       try {
-        const acc = await api('computeSipAccumulation', { schemeCode: s.schemeCode, startDate: s.startDate, frequency: s.frequency, amount: s.amount });
+        const acc = await api('computeSipAccumulation', {
+          schemeCode: s.schemeCode, startDate: s.startDate, frequency: s.frequency, amount: s.amount,
+          asOfDate: s.asOfDate || null,
+          asOfInvested: (s.asOfInvested === null || s.asOfInvested === undefined) ? null : s.asOfInvested,
+          asOfMarketValue: (s.asOfMarketValue === null || s.asOfMarketValue === undefined) ? null : s.asOfMarketValue
+        });
         const units = acc.totalUnits;
         const invested = s.investedTotal ? Number(s.investedTotal) : acc.totalInvested;
         const currentValue = nav * units;
         return { id:s.id, fundName:s.fundName, schemeType:s.schemeType||'Other', source:'SIP', units, nav, currentValue, invested,
           gain: currentValue-invested, gainPct: invested>0 ? ((currentValue-invested)/invested*100) : 0,
           navIsLive: navs[s.fundName]!==null && navs[s.fundName]!==undefined && navs[s.fundName]!=='',
-          folio:s.folio, frequency:s.frequency, amount:s.amount, startDate:s.startDate, computedFromHistory:true };
+          folio:s.folio, frequency:s.frequency, amount:s.amount, startDate:s.startDate, computedFromHistory:true,
+          usedAsOf: !!acc.usedAsOf, asOfDate: s.asOfDate || null, newInstallments: acc.installments };
       } catch(e){ /* fall through to estimate below */ }
     }
     const units = Number(s.units||0);
@@ -1405,7 +1423,7 @@ async function renderDashboard(){
     const rc = r.gain >= 0 ? 'var(--teal)' : 'var(--maroon)';
     const weight = totalValue>0 ? (r.currentValue/totalValue*100) : 0;
     html += `<tr class="drill-row" data-drill="${i}">
-      <td>${esc(r.fundName)}${!r.navIsLive?'<div class="mf-sub" style="margin:0">using last-saved NAV</div>':''}${r.source==='SIP'?(r.computedFromHistory?'<div class="mf-sub" style="margin:0;color:var(--teal)">✓ units from actual NAV history</div>':'<div class="mf-sub" style="margin:0">using manually entered units (estimate)</div>'):''}</td>
+      <td>${esc(r.fundName)}${!r.navIsLive?'<div class="mf-sub" style="margin:0">using last-saved NAV</div>':''}${r.source==='SIP'?(r.computedFromHistory?(r.usedAsOf?`<div class="mf-sub" style="margin:0;color:var(--teal)">✓ opening value as of ${esc(r.asOfDate)} + ${r.newInstallments||0} auto-SIP installment(s) since</div>`:'<div class="mf-sub" style="margin:0;color:var(--teal)">✓ units from actual NAV history</div>'):'<div class="mf-sub" style="margin:0">using manually entered units (estimate)</div>'):''}</td>
       <td><span class="pill other">${r.source}</span></td>
       <td class="num">${Number(r.units||0).toFixed(3)}</td>
       <td class="num">₹${r.nav.toFixed(2)}</td>
@@ -1548,7 +1566,13 @@ function renderSip(){
       <div class="mf-field"><label>Present NAV (₹)</label><input id="sip-nav" type="number" min="0" step="0.01" placeholder="Auto-fills when you pick a fund"></div>
       <div class="mf-field"><label>Units held</label><input id="sip-units" type="number" min="0" step="0.001" placeholder="120.500"></div>
       <div class="mf-field"><label>Folio number</label><input id="sip-folio" placeholder="1234567/89"></div>
-      <div class="mf-field"><label>Total invested till date (₹) <span style="text-transform:none;letter-spacing:0">optional</span></label><input id="sip-invested" type="number" min="0" placeholder="Leave blank to auto-estimate"></div>
+      <div class="mf-field"><label>Total invested till date (₹) <span style="text-transform:none;letter-spacing:0">optional override</span></label><input id="sip-invested" type="number" min="0" placeholder="Leave blank to auto-estimate"></div>
+    </div>
+    <div class="mf-sub" style="margin:10px 0 6px"><strong>Already running this SIP?</strong> Instead of re-deriving the entire purchase history, give us a snapshot from your last statement — we'll auto-add every SIP installment from that date onward using real NAVs, and keep it updated as days pass. Leave all three blank to have the system compute everything from your Start date instead.</div>
+    <div class="mf-row">
+      <div class="mf-field"><label>As of date</label><input id="sip-asof-date" type="date"></div>
+      <div class="mf-field"><label>Invested till that date (₹)</label><input id="sip-asof-invested" type="number" min="0"></div>
+      <div class="mf-field"><label>Market value as of that date (₹)</label><input id="sip-asof-value" type="number" min="0"></div>
     </div>
     <button class="mf-btn gold" id="btnAddSip">Add SIP to register</button>
   </div>`;
@@ -1901,7 +1925,10 @@ function attachHandlers(){
       units: Number(document.getElementById('sip-units').value || 0),
       folio: document.getElementById('sip-folio').value.trim(),
       investedTotal: document.getElementById('sip-invested').value ? Number(document.getElementById('sip-invested').value) : null,
-      schemeCode: document.getElementById('sip-code').value || null
+      schemeCode: document.getElementById('sip-code').value || null,
+      asOfDate: document.getElementById('sip-asof-date').value || null,
+      asOfInvested: document.getElementById('sip-asof-invested').value ? Number(document.getElementById('sip-asof-invested').value) : null,
+      asOfMarketValue: document.getElementById('sip-asof-value').value ? Number(document.getElementById('sip-asof-value').value) : null
     });
     saveSips();
     toast('SIP added — showing your updated dashboard');

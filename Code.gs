@@ -19,7 +19,7 @@
 // always confirm the deployed Web App is actually running what you just pasted — "Unknown
 // action" errors almost always mean you edited Code.gs but didn't create a NEW deployment
 // version (Deploy > Manage deployments > pencil icon > Version: New version > Deploy).
-const SCRIPT_VERSION = 'v7.1-2026-07-10';
+const SCRIPT_VERSION = 'v8.0-2026-07-11';
 
 function doPost(e) {
   let result;
@@ -137,6 +137,27 @@ function refreshFundList() {
  * This replaces guessing from a manually-entered "units held" number.
  * Cached per scheme+SIP terms for 6 hours since historical NAV only changes once a day.
  */
+function advanceDate_(d, frequency) {
+  if (frequency === 'Daily') d.setDate(d.getDate() + 1);
+  else if (frequency === 'Weekly') d.setDate(d.getDate() + 7);
+  else if (frequency === 'Quarterly') d.setMonth(d.getMonth() + 3);
+  else d.setMonth(d.getMonth() + 1); // Monthly, and default
+  return d;
+}
+
+/**
+ * Two supported modes:
+ *  1) Pure auto mode — give it schemeCode/startDate/frequency/amount and it walks every
+ *     installment date from startDate to today, buying at that day's REAL historical NAV
+ *     (via mfapi.in), and sums the units. This is the "system calculates everything" path.
+ *  2) Hybrid / as-of mode — for a SIP that was already running before the investor started
+ *     using this tool, they can instead supply asOfDate + asOfInvested (₹ invested till that
+ *     date) + asOfMarketValue (₹ it was worth on that date, e.g. from a CAS/statement). The
+ *     as-of market value is converted into units at that date's real NAV, and the engine then
+ *     only simulates NEW installments from the day after asOfDate through today — so the
+ *     portfolio keeps updating itself automatically as each new SIP date passes, without
+ *     needing to re-derive the entire historical purchase trail.
+ */
 function computeSipAccumulation(body) {
   const schemeCode = body.schemeCode;
   const startDate = body.startDate;
@@ -144,7 +165,16 @@ function computeSipAccumulation(body) {
   const amount = Number(body.amount || 0);
   if (!schemeCode || !startDate || !amount) return { ok: false, error: 'Missing schemeCode/startDate/amount' };
 
-  const cacheKey = 'sipacc_' + schemeCode + '_' + startDate + '_' + frequency + '_' + amount + '_' + Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'Etc/UTC', 'yyyy-MM-dd');
+  const asOfDate = body.asOfDate || null;
+  const asOfInvestedRaw = body.asOfInvested;
+  const asOfMarketValueRaw = body.asOfMarketValue;
+  const asOfInvested = (asOfInvestedRaw !== null && asOfInvestedRaw !== undefined && asOfInvestedRaw !== '') ? Number(asOfInvestedRaw) : null;
+  const asOfMarketValue = (asOfMarketValueRaw !== null && asOfMarketValueRaw !== undefined && asOfMarketValueRaw !== '') ? Number(asOfMarketValueRaw) : null;
+  const useAsOf = !!(asOfDate && asOfMarketValue !== null && !isNaN(asOfMarketValue) && !isNaN(new Date(asOfDate).getTime()));
+
+  const cacheKey = 'sipacc_' + schemeCode + '_' + startDate + '_' + frequency + '_' + amount + '_' +
+    (useAsOf ? ('asof_' + asOfDate + '_' + asOfInvested + '_' + asOfMarketValue + '_') : '') +
+    Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'Etc/UTC', 'yyyy-MM-dd');
   const cache = CacheService.getScriptCache();
   const cached = cache.get(cacheKey);
   if (cached) return JSON.parse(cached);
@@ -173,21 +203,31 @@ function computeSipAccumulation(body) {
     return ans ? ans.nav : series[0].nav;
   };
 
-  const start = new Date(startDate);
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  let totalUnits = 0, installments = 0, d = new Date(start), guard = 0;
+
+  let openingUnits = 0, openingInvested = 0, simulateFrom;
+  if (useAsOf) {
+    const asOf = new Date(asOfDate);
+    asOf.setHours(0, 0, 0, 0);
+    const navAsOf = navOnOrBefore(asOf);
+    openingUnits = navAsOf > 0 ? (asOfMarketValue / navAsOf) : 0;
+    openingInvested = (asOfInvested !== null && !isNaN(asOfInvested)) ? asOfInvested : asOfMarketValue;
+    simulateFrom = advanceDate_(new Date(asOf), frequency); // first NEW installment is the one after the snapshot date
+  } else {
+    simulateFrom = new Date(startDate);
+  }
+
+  let totalUnits = openingUnits, installments = 0, d = new Date(simulateFrom), guard = 0;
   while (d <= today && guard < 3000) {
     const nav = navOnOrBefore(d);
     if (nav > 0) { totalUnits += amount / nav; installments++; }
-    if (frequency === 'Daily') d.setDate(d.getDate() + 1);
-    else if (frequency === 'Weekly') d.setDate(d.getDate() + 7);
-    else if (frequency === 'Quarterly') d.setMonth(d.getMonth() + 3);
-    else d.setMonth(d.getMonth() + 1);
+    advanceDate_(d, frequency);
     guard++;
   }
   const latestNav = series[series.length - 1].nav;
   const result = {
-    ok: true, totalUnits, installments, totalInvested: installments * amount,
+    ok: true, totalUnits, installments, totalInvested: openingInvested + installments * amount,
+    openingUnits, openingInvested, usedAsOf: useAsOf,
     latestNav, latestDate: Utilities.formatDate(series[series.length - 1].date, Session.getScriptTimeZone() || 'Etc/UTC', 'yyyy-MM-dd')
   };
   cache.put(cacheKey, JSON.stringify(result), 6 * 3600);
@@ -679,11 +719,7 @@ function nextDueDateServer(sip) {
   let d = new Date(start);
   let guard = 0;
   while (d < today && guard < 3000) {
-    if (sip.frequency === 'Daily') d.setDate(d.getDate() + 1);
-    else if (sip.frequency === 'Weekly') d.setDate(d.getDate() + 7);
-    else if (sip.frequency === 'Monthly') d.setMonth(d.getMonth() + 1);
-    else if (sip.frequency === 'Quarterly') d.setMonth(d.getMonth() + 3);
-    else d.setMonth(d.getMonth() + 1);
+    advanceDate_(d, sip.frequency);
     guard++;
   }
   return d;
