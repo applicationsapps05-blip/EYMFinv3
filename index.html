@@ -342,18 +342,27 @@ table.mf-table tr:hover td { background: rgba(169,127,31,0.06); }
 <div class="toast" id="mfToast"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script type="module">
+// pdf.js 4.x+ only ships as an ES module, so it's loaded here via dynamic import and
+// exposed on window.pdfjsLib for the classic <script> block below to use. Older pdf.js
+// 3.x had known text-extraction bugs on certain PDF producers (e.g. "Microsoft Print to
+// PDF" output) that could silently return zero text items on an otherwise-valid, text-based
+// PDF — upgrading avoids that class of bug.
+window.__pdfjsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.149/pdf.min.mjs')
+  .then(mod => {
+    mod.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.149/pdf.worker.min.mjs';
+    window.pdfjsLib = mod;
+    return mod;
+  })
+  .catch(err => { console.error('pdf.js failed to load', err); return null; });
+</script>
 <script>
 (function(){
 
 // ====== FILL THIS IN: paste the Web App URL you get from deploying the Apps Script (see SHEETS_SETUP.md) ======
 const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxcTrQJdBZfZqDtV8FJl_X3_dkeY5kSQCHRxmhYlKN8Vwq36BD6GxVGIrp3J_A12SIAsA/exec";
 // ==================================================================================================
-
-if (window.pdfjsLib) {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-}
 
 // Thin client for the Google Sheets backend. Every call POSTs JSON to the Apps Script Web App,
 // which reads/writes a "Users" and "Clients" tab in your Google Sheet.
@@ -787,10 +796,7 @@ function readCasRows(boxId){
 // underlying content stream is NOT in visual reading order for these statements.
 // Different PDF generators produce slightly different line-spacing, so this tries
 // several clustering tolerances and a merged-text fallback rather than assuming one works.
-async function extractPdfItemsByPage(file, password){
-  const buf = await file.arrayBuffer();
-  const opts = { data: buf };
-  if(password) opts.password = password;
+async function readPdfPages(opts){
   const pdf = await pdfjsLib.getDocument(opts).promise;
   const pages = [];
   for(let p = 1; p <= pdf.numPages; p++){
@@ -804,11 +810,35 @@ async function extractPdfItemsByPage(file, password){
   return pages;
 }
 
+async function extractPdfItemsByPage(file, password){
+  if(window.__pdfjsReady) await window.__pdfjsReady;
+  if(!window.pdfjsLib) throw new Error('PDF reader library failed to load (check your internet connection and try again)');
+  const buf = await file.arrayBuffer();
+  const baseOpts = {};
+  if(password) baseOpts.password = password;
+
+  let pages = await readPdfPages({ data: buf.slice(0), ...baseOpts });
+  const totalItems = pages.reduce((n, items) => n + items.length, 0);
+  if(totalItems === 0){
+    // Some PDF producers occasionally trip up the worker thread and silently return
+    // no text; retrying on the main thread (no worker) is a cheap, reliable fallback.
+    try {
+      pages = await readPdfPages({ data: buf.slice(0), disableWorker: true, ...baseOpts });
+    } catch(e){ /* keep the original (empty) result if this also fails */ }
+  }
+  return pages;
+}
+
 function clusterItemsToLines(items, tolerance){
   const sorted = items.slice().sort((a,b) => (b.y - a.y) || (a.x - b.x));
   const lines = [];
   let currentY = null, currentLine = [];
-  const pushLine = () => { if(currentLine.length) lines.push(currentLine.map(it=>it.str).join(' ').replace(/\s+/g,' ').trim()); };
+  // IMPORTANT: re-sort each line's items by x before joining. The outer sort above is
+  // primarily by y, so two items belonging to the same visual row but with a fraction-
+  // of-a-point difference in y (common with some PDF producers, e.g. "Microsoft Print
+  // to PDF") can otherwise end up joined in the wrong left-to-right order, silently
+  // breaking the row regex below.
+  const pushLine = () => { if(currentLine.length) lines.push(currentLine.slice().sort((a,b)=>a.x-b.x).map(it=>it.str).join(' ').replace(/\s+/g,' ').trim()); };
   sorted.forEach(it => {
     if(currentY === null || Math.abs(it.y - currentY) > tolerance){
       pushLine();
