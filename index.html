@@ -349,9 +349,27 @@ table.mf-table tr:hover td { background: rgba(169,127,31,0.06); }
 // 3.x had known text-extraction bugs on certain PDF producers (e.g. "Microsoft Print to
 // PDF" output) that could silently return zero text items on an otherwise-valid, text-based
 // PDF — upgrading avoids that class of bug.
-window.__pdfjsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.149/pdf.min.mjs')
-  .then(mod => {
-    mod.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.149/pdf.worker.min.mjs';
+const PDFJS_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.149/';
+window.__pdfjsReady = import(PDFJS_BASE + 'pdf.min.mjs')
+  .then(async mod => {
+    // IMPORTANT: point the worker at a same-origin blob: URL built from the worker
+    // script's actual content, rather than the bare cross-origin CDN URL. This app runs
+    // inside Google Apps Script's sandboxed iframe, and constructing a Worker directly
+    // from a different origin is rejected by some browsers/CSPs — when that happens,
+    // pdf.js's cross-origin fallback doesn't always kick in reliably, and
+    // page.getTextContent() silently comes back with zero items on an otherwise-perfectly
+    // normal PDF. That surfaces to the user as "couldn't find any holdings rows in this
+    // PDF" even though nothing is wrong with the PDF itself. Fetching the worker script
+    // and handing pdf.js a blob: URL keeps the Worker same-origin and sidesteps this.
+    try {
+      const workerRes = await fetch(PDFJS_BASE + 'pdf.worker.min.mjs');
+      if(!workerRes.ok) throw new Error('HTTP ' + workerRes.status);
+      const workerBlob = await workerRes.blob();
+      mod.GlobalWorkerOptions.workerSrc = URL.createObjectURL(workerBlob);
+    } catch(err){
+      console.error('pdf.js worker prefetch failed, falling back to direct CDN URL', err);
+      mod.GlobalWorkerOptions.workerSrc = PDFJS_BASE + 'pdf.worker.min.mjs';
+    }
     window.pdfjsLib = mod;
     return mod;
   })
@@ -816,6 +834,10 @@ async function readPdfPages(opts){
   return pages;
 }
 
+function isPasswordError(e){
+  return !!e && (e.name === 'PasswordException' || /password/i.test(e.message || ''));
+}
+
 async function extractPdfItemsByPage(file, password){
   if(window.__pdfjsReady) await window.__pdfjsReady;
   if(!window.pdfjsLib) throw new Error('PDF reader library failed to load (check your internet connection and try again)');
@@ -823,14 +845,27 @@ async function extractPdfItemsByPage(file, password){
   const baseOpts = {};
   if(password) baseOpts.password = password;
 
-  let pages = await readPdfPages({ data: buf.slice(0), ...baseOpts });
+  let pages = [];
+  let firstError = null;
+  try {
+    pages = await readPdfPages({ data: buf.slice(0), ...baseOpts });
+  } catch(e){
+    firstError = e;
+  }
+
   const totalItems = pages.reduce((n, items) => n + items.length, 0);
   if(totalItems === 0){
-    // Some PDF producers occasionally trip up the worker thread and silently return
-    // no text; retrying on the main thread (no worker) is a cheap, reliable fallback.
+    // A wrong/missing password is a real, expected failure — surface it as-is rather
+    // than masking it behind a retry that can't possibly fix it.
+    if(isPasswordError(firstError)) throw firstError;
+    // Otherwise, some PDF producers (or a flaky worker spin-up) can trip up text
+    // extraction on the first pass; one retry is a cheap, reliable second chance.
     try {
-      pages = await readPdfPages({ data: buf.slice(0), disableWorker: true, ...baseOpts });
-    } catch(e){ /* keep the original (empty) result if this also fails */ }
+      pages = await readPdfPages({ data: buf.slice(0), ...baseOpts });
+    } catch(e){
+      if(firstError) throw firstError; // the original error is usually more informative
+      throw e;
+    }
   }
   return pages;
 }
@@ -858,9 +893,19 @@ function clusterItemsToLines(items, tolerance){
   return lines;
 }
 
+// Registrars that can appear as the last field of a holdings row. Extend this list if a
+// new CAS variant is reported (e.g. demat-held units serviced by NSDL/CDSL rather than
+// the two AMC-side registrars).
+const CAS_REGISTRARS = 'KFINTECH|CAMS|NSDL|CDSL';
+const CAS_REGISTRAR_RE = new RegExp('\\b(?:' + CAS_REGISTRARS + ')\\b');
+
 // Deliberately NOT anchored to start/end of line — real-world extraction sometimes carries
-// stray leading/trailing characters, so we search for the pattern rather than demand an exact match.
-const CAS_ROW_RE = /(\d+(?:\/\d*)?)\s*(IN[A-Z0-9]{9,10})\s+([A-Z0-9]+)\s*-\s*(.+?)\s+([\d,]+\.\d+)\s+([\d,]+\.\d+)\s+(\d{2}-[A-Za-z]{3}-\d{4})\s+([\d,]+\.\d+)\s+([\d,]+\.\d+)\s+(KFINTECH|CAMS)/;
+// stray leading/trailing characters, so we search for the pattern rather than demand an exact
+// match. Folio numbers are normally digits with an optional "/nn" suffix, but a "-nn" suffix
+// shows up on a few registrars' statements too, so both separators are accepted.
+const CAS_ROW_RE = new RegExp(
+  '(\\d[\\d\\/\\-]*)\\s*(IN[A-Z0-9]{9,10})\\s+([A-Z0-9]+)\\s*-\\s*(.+?)\\s+([\\d,]+\\.\\d+)\\s+([\\d,]+\\.\\d+)\\s+(\\d{2}-[A-Za-z]{3}-\\d{4})\\s+([\\d,]+\\.\\d+)\\s+([\\d,]+\\.\\d+)\\s+(' + CAS_REGISTRARS + ')'
+);
 const CAS_ROW_RE_G = new RegExp(CAS_ROW_RE.source, 'g');
 
 function guessSchemeType(name){
@@ -902,15 +947,48 @@ function parseCasBlob(text){
   return holdings;
 }
 
+// Some PDF producers put a holdings row's Scheme Name — and occasionally other columns
+// too — on its own separately-clustered line when the text wraps, so a single clustered
+// "line" doesn't always contain every field a row needs (this is sensitive to exactly
+// which y-tolerance was tried above). Every holdings row reliably ENDS with a Registrar
+// name though, so merging consecutive lines up to (and including) the next Registrar
+// occurrence reconstructs the full row regardless of how many physical lines it was
+// split across, without having to guess the right tolerance.
+function mergeLinesIntoRowBlocks(lines){
+  const blocks = [];
+  let current = [];
+  lines.forEach(line => {
+    current.push(line);
+    if(CAS_REGISTRAR_RE.test(line)){
+      blocks.push(current.join(' ').replace(/\s+/g,' ').trim());
+      current = [];
+    }
+  });
+  return blocks;
+}
+
+function parseCasBlocks(lines){
+  const holdings = [];
+  mergeLinesIntoRowBlocks(lines).forEach(block => {
+    const m = CAS_ROW_RE.exec(block);
+    if(m) holdings.push(holdingFromMatch(m));
+  });
+  return holdings;
+}
+
 async function extractCasHoldings(file, password){
   const pages = await extractPdfItemsByPage(file, password);
   let best = { holdings: [], lines: [] };
 
-  // Pass 1: try several line-clustering tolerances (different PDF generators space rows differently)
+  // Pass 1: try several line-clustering tolerances (different PDF generators space rows
+  // differently). At each tolerance, try both plain per-line matching and the more
+  // forgiving registrar-anchored block merge above, and keep whichever finds more.
   for(const tol of [3, 2, 4, 6, 8, 12]){
     let allLines = [];
     pages.forEach(items => { allLines = allLines.concat(clusterItemsToLines(items, tol)); });
-    const holdings = parseCasLines(allLines);
+    const fromLines = parseCasLines(allLines);
+    const fromBlocks = parseCasBlocks(allLines);
+    const holdings = fromBlocks.length >= fromLines.length ? fromBlocks : fromLines;
     if(holdings.length > best.holdings.length){
       best = { holdings, lines: allLines };
     }
@@ -955,7 +1033,7 @@ function wireCasPdfImporter(opts){
         statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Found ${holdings.length} holding${holdings.length>1?'s':''}.</strong> Review the rows below (fund names may be abbreviated — edit if needed), then click "Upload".</div>`;
       }
     } catch(e){
-      const msg = /password/i.test(e.message||'') || (e.name==='PasswordException')
+      const msg = isPasswordError(e)
         ? 'This PDF is password-protected. Enter the password above (often your PAN in capitals) and try again.'
         : ('Could not read this PDF: ' + esc(e.message||e.name||'unknown error'));
       statusBox.innerHTML = `<div class="notice warn" style="margin:0">${msg}</div>`;
