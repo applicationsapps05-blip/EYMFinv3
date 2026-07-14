@@ -3,6 +3,13 @@
  * Paste this into Extensions > Apps Script in your Google Sheet, then deploy as a Web App.
  * See SHEETS_SETUP.md for step-by-step instructions.
  *
+ * IMPORTANT — after pasting this version in for the first time, run runPbkdf2SelfTest_()
+ * once from the Apps Script editor (function dropdown, top toolbar > select it > Run) to
+ * confirm password hashing works correctly on your account before deploying. Check View >
+ * Logs — it should say "PBKDF2 self-test passed." (it throws a visible error instead if
+ * something's wrong). Existing users' passwords keep working either way — they're
+ * transparently upgraded to the stronger hash the next time they log in.
+ *
  * Sheets used (created automatically if missing, except Users/Clients which you create once):
  *   "Users"    columns: Email | PasswordHash | IsAdvisor | Blocked
  *   "Clients"  columns: Email | Name | Phone | PAN | DOB | RiskScore | RiskDate | SIPsJSON | UpdatedAt | HoldingsJSON
@@ -13,13 +20,19 @@
  * "IsAdvisor" = TRUE makes that account a super-user / admin: they can add SIPs or CAS
  * holdings on behalf of any investor, change any investor's password, block/unblock logins,
  * post banner messages, view firm-wide AUM, and action New Purchase Requests.
+ *
+ * Auth model: login/signup are the only two actions that ever see a raw password. Every
+ * other action authenticates with a session token (issued at login/signup) instead — the
+ * browser never stores or resends the password itself. A session stays valid until the
+ * user logs out or an admin blocks that account. Failed logins on an account lock it out
+ * for 15 minutes after 5 attempts.
  */
 
 // Bump this whenever you paste in new code. The Admin Console shows this live so you can
 // always confirm the deployed Web App is actually running what you just pasted — "Unknown
 // action" errors almost always mean you edited Code.gs but didn't create a NEW deployment
 // version (Deploy > Manage deployments > pencil icon > Version: New version > Deploy).
-const SCRIPT_VERSION = 'v8.0-2026-07-11';
+const SCRIPT_VERSION = 'v12.0-2026-07-13-no-expiry';
 
 function doPost(e) {
   let result;
@@ -29,16 +42,18 @@ function doPost(e) {
     if (action === 'version') result = { ok: true, version: SCRIPT_VERSION };
     else if (action === 'signup') result = signup(body.email, body.password);
     else if (action === 'login') result = login(body.email, body.password);
+    else if (action === 'logout') result = logout(body.token);
+    else if (action === 'whoami') result = whoami(body.token);
     else if (action === 'saveData') result = saveData(body);
-    else if (action === 'loadData') result = loadData(body.email, body.password);
-    else if (action === 'listClients') result = listClients(body.email, body.password);
+    else if (action === 'loadData') result = loadData(body.email, body.token);
+    else if (action === 'listClients') result = listClients(body.email, body.token);
     else if (action === 'searchFunds') result = searchFunds(body.query);
-    else if (action === 'refreshFunds') result = refreshFundList();
+    else if (action === 'refreshFunds') result = requireAdminAction(body, refreshFundList);
     else if (action === 'lookupNavs') result = lookupNavs(body.names || []);
     else if (action === 'computeSipAccumulation') result = computeSipAccumulation(body);
     else if (action === 'getNews') result = getNews();
-    else if (action === 'setupReminderTrigger') result = setupDailyReminderTrigger();
-    else if (action === 'getMessages') result = getMessages(body.email);
+    else if (action === 'setupReminderTrigger') result = requireAdminAction(body, setupDailyReminderTrigger);
+    else if (action === 'getMessages') result = getMessages(body.email, body.token);
     else if (action === 'submitPurchaseRequest') result = submitPurchaseRequest(body);
     else if (action === 'uploadCas') result = uploadOwnCas(body);
     // ---- super-user / admin actions ----
@@ -270,10 +285,213 @@ function searchFunds(query) {
   return { ok: true, funds: matches };
 }
 
-function hashPw(pw) {
+// =====================================================================================
+// Password hashing — PBKDF2-HMAC-SHA256, salted, ~10,000 iterations.
+//
+// The old scheme (see legacyHashPw_ below) was one unsalted SHA-256 round: fast enough
+// that a stolen PasswordHash column could be brute-forced at billions of guesses/second
+// on a GPU, and identical passwords produced identical hashes (no salt). PBKDF2 with a
+// random salt per user and many iterations makes brute-forcing thousands of times slower
+// and defeats precomputed rainbow tables.
+//
+// Apps Script has no native bcrypt/scrypt/Argon2, so this hand-rolls PBKDF2 on top of
+// Utilities.computeHmacSha256Signature. That function's Byte[] values are SIGNED
+// (-128..127, Java-style) — toSigned_/toUnsigned_ below convert to/from the normal 0..255
+// range used everywhere else here. After pasting this file in, run runPbkdf2SelfTest_()
+// once from the Apps Script editor (function dropdown > select it > Run) — it checks the
+// output against a published PBKDF2 test vector and throws if anything is wrong, so you
+// find out before any real password depends on it.
+// =====================================================================================
+
+const PBKDF2_ITERATIONS = 10000;
+const PBKDF2_KEY_BYTES = 32;
+const PBKDF2_SALT_BYTES = 16;
+
+function toSigned_(b) { return b > 127 ? b - 256 : b; }
+function toUnsigned_(b) { return b & 0xff; }
+function bytesToSigned_(bytes) { return bytes.map(toSigned_); }
+function bytesToUnsigned_(bytes) { return bytes.map(toUnsigned_); }
+
+function hmacSha256Bytes_(valueBytesUnsigned, keyBytesUnsigned) {
+  const sig = Utilities.computeHmacSha256Signature(bytesToSigned_(valueBytesUnsigned), bytesToSigned_(keyBytesUnsigned));
+  return bytesToUnsigned_(sig);
+}
+function intToBytes4_(i) { return [(i >>> 24) & 0xff, (i >>> 16) & 0xff, (i >>> 8) & 0xff, i & 0xff]; }
+function xorBytes_(a, b) { return a.map((v, idx) => v ^ b[idx]); }
+
+function pbkdf2Sha256_(passwordBytes, saltBytes, iterations, keyLenBytes) {
+  const hLen = 32;
+  const blocks = Math.ceil(keyLenBytes / hLen);
+  let dk = [];
+  for (let i = 1; i <= blocks; i++) {
+    let u = hmacSha256Bytes_(saltBytes.concat(intToBytes4_(i)), passwordBytes);
+    let t = u.slice();
+    for (let j = 1; j < iterations; j++) {
+      u = hmacSha256Bytes_(u, passwordBytes);
+      t = xorBytes_(t, u);
+    }
+    dk = dk.concat(t);
+  }
+  return dk.slice(0, keyLenBytes);
+}
+
+// Utilities has no direct CSPRNG byte generator, but getUuid() is backed by a secure
+// random source; stitching enough UUIDs together and truncating gives cryptographically
+// random bytes.
+function randomBytes_(n) {
+  let bytes = [];
+  while (bytes.length < n) {
+    const hex = Utilities.getUuid().replace(/-/g, '');
+    for (let i = 0; i < hex.length; i += 2) bytes.push(parseInt(hex.substr(i, 2), 16));
+  }
+  return bytes.slice(0, n);
+}
+
+function bytesToBase64_(bytes) { return Utilities.base64Encode(bytesToSigned_(bytes)); }
+function base64ToBytes_(b64) { return bytesToUnsigned_(Utilities.base64Decode(b64)); }
+function strToUtf8Bytes_(s) { return bytesToUnsigned_(Utilities.newBlob(s).getBytes()); }
+
+// New-format stored hash: "pbkdf2$<iterations>$<saltBase64>$<hashBase64>". The iteration
+// count travels WITH the hash (rather than being assumed from a global constant) so
+// PBKDF2_ITERATIONS can be raised later without invalidating hashes created under the old value.
+function makePasswordHash_(password) {
+  const salt = randomBytes_(PBKDF2_SALT_BYTES);
+  const dk = pbkdf2Sha256_(strToUtf8Bytes_(password), salt, PBKDF2_ITERATIONS, PBKDF2_KEY_BYTES);
+  return 'pbkdf2$' + PBKDF2_ITERATIONS + '$' + bytesToBase64_(salt) + '$' + bytesToBase64_(dk);
+}
+
+// The original hashing scheme (unsalted SHA-256 hex digest) — kept only so existing
+// accounts' stored hashes can still be verified once, to transparently upgrade them.
+function legacyHashPw_(pw) {
   const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, pw);
   return digest.map(b => ((b < 0 ? b + 256 : b).toString(16)).padStart(2, '0')).join('');
 }
+
+function timingSafeEqual_(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const len = Math.max(a.length, b.length);
+  let diff = a.length === b.length ? 0 : 1;
+  for (let i = 0; i < len; i++) diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  return diff === 0;
+}
+
+// Verifies a password against a stored hash of either format. needsUpgrade is true only
+// for a successfully-verified LEGACY hash, so callers can transparently re-hash with the
+// new scheme on that login — no forced password reset for anyone.
+function verifyPassword_(password, storedHash) {
+  if (!storedHash) return { ok: false, needsUpgrade: false };
+  if (storedHash.indexOf('pbkdf2$') === 0) {
+    const parts = storedHash.split('$');
+    const iterations = Number(parts[1]);
+    const salt = base64ToBytes_(parts[2]);
+    const dk = pbkdf2Sha256_(strToUtf8Bytes_(password), salt, iterations, PBKDF2_KEY_BYTES);
+    return { ok: timingSafeEqual_(bytesToBase64_(dk), parts[3]), needsUpgrade: false };
+  }
+  const ok = timingSafeEqual_(legacyHashPw_(password), storedHash);
+  return { ok: ok, needsUpgrade: ok };
+}
+
+// Run this once from the Apps Script editor after pasting this file in (function dropdown
+// > runPbkdf2SelfTest_ > Run). Confirms PBKDF2 produces correct, known-good output on this
+// account's runtime before any real password depends on it. Check View > Logs afterward —
+// it throws (visible as a red error) if anything doesn't match.
+function runPbkdf2SelfTest_() {
+  const hex1 = pbkdf2Sha256_(strToUtf8Bytes_('password'), strToUtf8Bytes_('salt'), 1, 32).map(b => b.toString(16).padStart(2, '0')).join('');
+  if (hex1 !== '120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b') throw new Error('PBKDF2 self-test FAILED (1 iter): ' + hex1);
+  const hex2 = pbkdf2Sha256_(strToUtf8Bytes_('password'), strToUtf8Bytes_('salt'), 2000, 32).map(b => b.toString(16).padStart(2, '0')).join('');
+  if (hex2 !== '9209a0c90243e88b89488f99cd7ea010c244cc7a9d4bf65c157f2d8f642eb952') throw new Error('PBKDF2 self-test FAILED (2000 iter): ' + hex2);
+  const hash = makePasswordHash_('correct horse battery staple');
+  if (!verifyPassword_('correct horse battery staple', hash).ok) throw new Error('PBKDF2 self-test FAILED: round-trip hash/verify mismatch');
+  if (verifyPassword_('wrong password', hash).ok) throw new Error('PBKDF2 self-test FAILED: an incorrect password verified as correct');
+  Logger.log('PBKDF2 self-test passed.');
+}
+
+// =====================================================================================
+// Sessions — issued on login/signup, checked on every other action. Replaces the old
+// design where the browser held the plaintext password in memory/sessionStorage and
+// resent it with every single request. A token is a random opaque bearer credential
+// (~244 bits of randomness from two stitched-together secure UUIDs) that only maps to a
+// session inside this script's properties — it reveals nothing about the password.
+//
+// Sessions do NOT expire on their own: a token stays valid until the user logs out, or
+// until an admin blocks that account (resolveSession_ checks Blocked on every use and
+// invalidates immediately if so). Stored in PropertiesService rather than CacheService
+// specifically because CacheService entries are capped at 6 hours no matter what.
+// =====================================================================================
+
+function createSession_(email, isAdvisor) {
+  const token = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '');
+  PropertiesService.getScriptProperties().setProperty('sess_' + token, JSON.stringify({ email: email, isAdvisor: !!isAdvisor, createdAt: Date.now() }));
+  return token;
+}
+
+// Resolves a token to its session (or null if missing, or the account is blocked),
+// keeping isAdvisor fresh in case admin rights changed since login.
+function resolveSession_(token) {
+  if (!token) return null;
+  const props = PropertiesService.getScriptProperties();
+  const key = 'sess_' + token;
+  const raw = props.getProperty(key);
+  if (!raw) return null;
+  const sess = JSON.parse(raw);
+  const u = findRow(getUsersSheet(), sess.email);
+  if (!u || isBlocked(u.data)) { props.deleteProperty(key); return null; }
+  const freshIsAdvisor = (u.data[2] === true || u.data[2] === 'TRUE');
+  if (freshIsAdvisor !== sess.isAdvisor) {
+    sess.isAdvisor = freshIsAdvisor;
+    props.setProperty(key, JSON.stringify(sess));
+  }
+  return sess;
+}
+
+function destroySession_(token) {
+  if (token) PropertiesService.getScriptProperties().deleteProperty('sess_' + token);
+}
+
+function logout(token) {
+  destroySession_(token);
+  return { ok: true };
+}
+
+// Lets the client silently check "am I still signed in?" on page load using only the
+// token it already has — it no longer has the password to re-login with, by design.
+function whoami(token) {
+  const sess = resolveSession_(token);
+  if (!sess) return { ok: false, error: 'Not signed in' };
+  return { ok: true, email: sess.email, isAdvisor: sess.isAdvisor };
+}
+
+// =====================================================================================
+// Login rate-limiting — 5 failed attempts on one account locks it out for 15 minutes.
+// Scoped by email (not IP, which Apps Script doesn't expose) since the threat this
+// defends against is a specific account's password being guessed/stuffed, which is what
+// matters most here — a single admin account guards every investor's data.
+// =====================================================================================
+
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_SECONDS = 15 * 60;
+
+function loginAttemptKey_(email) { return 'loginfail_' + (email || '').toLowerCase().trim(); }
+
+function checkLoginLockout_(email) {
+  const raw = CacheService.getScriptCache().get(loginAttemptKey_(email));
+  if (!raw) return { locked: false };
+  const info = JSON.parse(raw);
+  const remainingSec = Math.max(0, Math.round((info.lockedUntil - Date.now()) / 1000));
+  return (info.count >= LOGIN_MAX_ATTEMPTS && remainingSec > 0) ? { locked: true, remainingSec: remainingSec } : { locked: false };
+}
+
+function recordLoginFailure_(email) {
+  const cache = CacheService.getScriptCache();
+  const key = loginAttemptKey_(email);
+  const raw = cache.get(key);
+  const info = raw ? JSON.parse(raw) : { count: 0 };
+  info.count++;
+  info.lockedUntil = Date.now() + LOGIN_LOCKOUT_SECONDS * 1000;
+  cache.put(key, JSON.stringify(info), LOGIN_LOCKOUT_SECONDS);
+}
+
+function clearLoginFailures_(email) { CacheService.getScriptCache().remove(loginAttemptKey_(email)); }
 
 function findRow(sheet, email) {
   const data = sheet.getDataRange().getValues();
@@ -292,35 +510,64 @@ function isBlocked(userRowData) {
 
 function signup(email, password) {
   if (!email || !password) return { ok: false, error: 'Email and password required' };
-  if (password.length < 6) return { ok: false, error: 'Password must be at least 6 characters' };
+  if (password.length < 8) return { ok: false, error: 'Password must be at least 8 characters' };
   const users = getUsersSheet();
   if (findRow(users, email)) return { ok: false, error: 'An account with that email already exists' };
-  users.appendRow([email, hashPw(password), false, false]);
+  users.appendRow([email, makePasswordHash_(password), false, false]);
   getClientsSheet().appendRow([email, '', '', '', '', '', '', '[]', new Date(), '[]']);
-  return { ok: true, isAdvisor: false };
+  const token = createSession_(email, false);
+  return { ok: true, isAdvisor: false, token: token };
 }
 
 function login(email, password) {
+  const lockout = checkLoginLockout_(email);
+  if (lockout.locked) {
+    const mins = Math.ceil(lockout.remainingSec / 60);
+    return { ok: false, error: 'Too many failed attempts on this account. Try again in about ' + mins + ' minute' + (mins === 1 ? '' : 's') + '.' };
+  }
   const u = findRow(getUsersSheet(), email);
   if (!u) return { ok: false, error: 'No account found for that email' };
-  if (u.data[1] !== hashPw(password)) return { ok: false, error: 'Incorrect password' };
+  const check = verifyPassword_(password, u.data[1]);
+  if (!check.ok) {
+    recordLoginFailure_(email);
+    return { ok: false, error: 'Incorrect password' };
+  }
   if (isBlocked(u.data)) return { ok: false, error: 'This account has been blocked. Please contact your advisor.' };
+  clearLoginFailures_(email);
+  if (check.needsUpgrade) {
+    // Transparent migration from the old unsalted-SHA-256 scheme — no action needed from
+    // the user, their next login already uses the stronger hash.
+    getUsersSheet().getRange(u.row, 2).setValue(makePasswordHash_(password));
+  }
   const isAdvisor = (u.data[2] === true || u.data[2] === 'TRUE');
-  return { ok: true, isAdvisor };
+  const token = createSession_(email, isAdvisor);
+  return { ok: true, isAdvisor: isAdvisor, token: token };
 }
 
-function authOk(email, password) {
-  const u = findRow(getUsersSheet(), email);
-  return !!u && u.data[1] === hashPw(password) && !isBlocked(u.data);
+// Replaces the old password-per-request check. email is the caller's claimed identity;
+// token must resolve to a live session for that SAME email — this ties every action back
+// to a real login rather than trusting a client-supplied email string on its own.
+function authOk(email, token) {
+  const sess = resolveSession_(token);
+  return !!sess && sess.email.toLowerCase() === (email || '').toLowerCase();
 }
 
-// Verifies the caller is a non-blocked account with IsAdvisor = TRUE.
-function requireAdmin(email, password) {
-  const u = findRow(getUsersSheet(), email);
-  if (!u || u.data[1] !== hashPw(password)) return { ok: false, error: 'Not authenticated' };
-  if (isBlocked(u.data)) return { ok: false, error: 'This account has been blocked.' };
-  if (!(u.data[2] === true || u.data[2] === 'TRUE')) return { ok: false, error: 'Super-user rights required for this action' };
+// Verifies the caller holds a live, non-blocked session with IsAdvisor = TRUE.
+function requireAdmin(email, token) {
+  const sess = resolveSession_(token);
+  if (!sess) return { ok: false, error: 'Not signed in — please sign in again.' };
+  if (sess.email.toLowerCase() !== (email || '').toLowerCase()) return { ok: false, error: 'Not authenticated' };
+  if (!sess.isAdvisor) return { ok: false, error: 'Super-user rights required for this action' };
   return { ok: true };
+}
+
+// Wraps a zero-argument admin-only action (e.g. refreshFundList, setupDailyReminderTrigger)
+// behind a requireAdmin() check, so it can't be invoked by an unauthenticated caller who
+// simply POSTs the action name directly to the Apps Script URL.
+function requireAdminAction(body, fn) {
+  const admin = requireAdmin(body.adminEmail, body.adminToken);
+  if (!admin.ok) return admin;
+  return fn();
 }
 
 function clientRowFor(sheet, email) {
@@ -333,7 +580,7 @@ function clientRowFor(sheet, email) {
 }
 
 function saveData(body) {
-  if (!authOk(body.email, body.password)) return { ok: false, error: 'Not authenticated' };
+  if (!authOk(body.email, body.token)) return { ok: false, error: 'Not authenticated' };
   const sheet = getClientsSheet();
   const inv = body.investor || {};
   const risk = body.riskAssessment || {};
@@ -348,8 +595,8 @@ function saveData(body) {
   return { ok: true };
 }
 
-function loadData(email, password) {
-  if (!authOk(email, password)) return { ok: false, error: 'Not authenticated' };
+function loadData(email, token) {
+  if (!authOk(email, token)) return { ok: false, error: 'Not authenticated' };
   const c = clientRowFor(getClientsSheet(), email);
   if (!c) return { ok: true, data: null };
   const d = c.data;
@@ -368,8 +615,8 @@ function loadData(email, password) {
  * Returns the full client roster for an admin: profile, SIPs, CAS holdings, and account status.
  * Used to power the Advisor/Admin Dashboard, the "select any user" dropdowns, the AUM tab and drill-downs.
  */
-function listClients(email, password) {
-  const admin = requireAdmin(email, password);
+function listClients(email, token) {
+  const admin = requireAdmin(email, token);
   if (!admin.ok) return admin;
   const users = getUsersSheet().getDataRange().getValues();
   const blockedByEmail = {};
@@ -398,7 +645,7 @@ function listClients(email, password) {
 
 /** Super-user: add a SIP to any investor's register. */
 function adminAddSip(body) {
-  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  const admin = requireAdmin(body.adminEmail, body.adminToken);
   if (!admin.ok) return admin;
   const sheet = getClientsSheet();
   const existing = clientRowFor(sheet, body.targetEmail);
@@ -412,7 +659,7 @@ function adminAddSip(body) {
 
 /** Super-user: update the full details of an investor's existing SIP (matched by body.sip.id). */
 function adminUpdateSip(body) {
-  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  const admin = requireAdmin(body.adminEmail, body.adminToken);
   if (!admin.ok) return admin;
   const sheet = getClientsSheet();
   const existing = clientRowFor(sheet, body.targetEmail);
@@ -428,7 +675,7 @@ function adminUpdateSip(body) {
 
 /** Super-user: delete one of an investor's SIPs (matched by body.sipId). */
 function adminDeleteSip(body) {
-  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  const admin = requireAdmin(body.adminEmail, body.adminToken);
   if (!admin.ok) return admin;
   const sheet = getClientsSheet();
   const existing = clientRowFor(sheet, body.targetEmail);
@@ -446,7 +693,7 @@ function adminDeleteSip(body) {
  * Same shape as adminUploadCas but scoped to the caller's own account.
  */
 function uploadOwnCas(body) {
-  if (!authOk(body.email, body.password)) return { ok: false, error: 'Not authenticated' };
+  if (!authOk(body.email, body.token)) return { ok: false, error: 'Not authenticated' };
   const sheet = getClientsSheet();
   const existing = clientRowFor(sheet, body.email);
   if (!existing) return { ok: false, error: 'Account not found' };
@@ -471,7 +718,7 @@ function uploadOwnCas(body) {
  * mode: "replace" (default) overwrites the investor's holdings list, "append" adds to it.
  */
 function adminUploadCas(body) {
-  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  const admin = requireAdmin(body.adminEmail, body.adminToken);
   if (!admin.ok) return admin;
   const sheet = getClientsSheet();
   const existing = clientRowFor(sheet, body.targetEmail);
@@ -494,19 +741,19 @@ function adminUploadCas(body) {
 
 /** Super-user: change any investor's password. */
 function adminChangePassword(body) {
-  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  const admin = requireAdmin(body.adminEmail, body.adminToken);
   if (!admin.ok) return admin;
-  if (!body.newPassword || body.newPassword.length < 6) return { ok: false, error: 'New password must be at least 6 characters' };
+  if (!body.newPassword || body.newPassword.length < 8) return { ok: false, error: 'New password must be at least 8 characters' };
   const users = getUsersSheet();
   const u = findRow(users, body.targetEmail);
   if (!u) return { ok: false, error: 'No such user account' };
-  users.getRange(u.row, 2).setValue(hashPw(body.newPassword));
+  users.getRange(u.row, 2).setValue(makePasswordHash_(body.newPassword));
   return { ok: true };
 }
 
 /** Super-user: block or unblock any investor's ability to log in. */
 function adminSetBlocked(body) {
-  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  const admin = requireAdmin(body.adminEmail, body.adminToken);
   if (!admin.ok) return admin;
   const users = getUsersSheet();
   const u = findRow(users, body.targetEmail);
@@ -520,7 +767,7 @@ function adminSetBlocked(body) {
 
 /** Super-user: post a banner message to one investor's email, or 'ALL' for everyone. */
 function adminBroadcast(body) {
-  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  const admin = requireAdmin(body.adminEmail, body.adminToken);
   if (!admin.ok) return admin;
   if (!body.message || !body.message.trim()) return { ok: false, error: 'Message text is required' };
   const sheet = getMessagesSheet();
@@ -530,7 +777,7 @@ function adminBroadcast(body) {
 }
 
 function adminListMessages(body) {
-  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  const admin = requireAdmin(body.adminEmail, body.adminToken);
   if (!admin.ok) return admin;
   const data = getMessagesSheet().getDataRange().getValues();
   const msgs = [];
@@ -544,7 +791,7 @@ function adminListMessages(body) {
 }
 
 function adminDeleteMessage(body) {
-  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  const admin = requireAdmin(body.adminEmail, body.adminToken);
   if (!admin.ok) return admin;
   const sheet = getMessagesSheet();
   const data = sheet.getDataRange().getValues();
@@ -555,7 +802,8 @@ function adminDeleteMessage(body) {
 }
 
 /** Returns the active banner message(s) visible to a given investor: firm-wide "ALL" plus any addressed to them. */
-function getMessages(email) {
+function getMessages(email, token) {
+  if (!authOk(email, token)) return { ok: false, error: 'Not authenticated' };
   const data = getMessagesSheet().getDataRange().getValues();
   const msgs = [];
   for (let i = 1; i < data.length; i++) {
@@ -574,7 +822,7 @@ function getMessages(email) {
 
 /** Investor submits a New Investment / Additional Purchase request, which lands with the advisor. */
 function submitPurchaseRequest(body) {
-  if (!authOk(body.email, body.password)) return { ok: false, error: 'Not authenticated' };
+  if (!authOk(body.email, body.token)) return { ok: false, error: 'Not authenticated' };
   const sheet = getRequestsSheet();
   const id = 'r_' + Utilities.getUuid().slice(0, 8);
   sheet.appendRow([id, body.email, body.name || '', body.type || 'New Investment', body.fundName || '', Number(body.amount || 0), body.notes || '', 'Pending', new Date()]);
@@ -582,7 +830,7 @@ function submitPurchaseRequest(body) {
 }
 
 function adminListRequests(body) {
-  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  const admin = requireAdmin(body.adminEmail, body.adminToken);
   if (!admin.ok) return admin;
   const data = getRequestsSheet().getDataRange().getValues();
   const requests = [];
@@ -596,7 +844,7 @@ function adminListRequests(body) {
 }
 
 function adminUpdateRequestStatus(body) {
-  const admin = requireAdmin(body.adminEmail, body.adminPassword);
+  const admin = requireAdmin(body.adminEmail, body.adminToken);
   if (!admin.ok) return admin;
   const sheet = getRequestsSheet();
   const data = sheet.getDataRange().getValues();

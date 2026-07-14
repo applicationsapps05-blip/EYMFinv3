@@ -390,11 +390,25 @@ async function api(action, payload){
     body: JSON.stringify({ action, ...payload })
   });
   const json = await res.json();
-  if(!json.ok) throw new Error(json.error || 'Request failed');
+  if(!json.ok){
+    // Sessions don't expire by themselves anymore, but a token can still go invalid (e.g.
+    // an admin blocked this account, or the token is simply stale/unrecognized) — when
+    // that happens mid-use, bounce back to sign-in with a clear reason instead of leaving
+    // the user looking at a raw error in whatever panel they were on.
+    if(currentUser && /not signed in|not authenticated/i.test(json.error || '')){
+      sessionStorage.removeItem('fc_session');
+      currentUser = null; isAdvisor = false; allClients = null; adminSelectedEmail = null;
+      const app = document.getElementById('mfapp'), authScreen = document.getElementById('mfAuthScreen');
+      if(app) app.style.display = 'none';
+      if(authScreen) authScreen.style.display = 'flex';
+      showAuthError('You were signed out. Please sign in again.');
+    }
+    throw new Error(json.error || 'Request failed');
+  }
   return json;
 }
 
-let currentUser = null; // { email, password, isAdvisor }
+let currentUser = null; // { email, token, isAdvisor } — token is a server-issued session credential, the password itself is never stored or resent after login/signup
 let isAdvisor = false;
 
 
@@ -412,12 +426,11 @@ let state = {
 let allClients = null; // admin-only cache of every investor's data
 let adminSelectedEmail = null; // which investor the Admin Console is currently acting on
 let dashboardChartInstances = [];
-let dashboardPollTimer = null;
 
 async function load(){
   if(!currentUser) return;
   try {
-    const res = await api('loadData', { email: currentUser.email, password: currentUser.password });
+    const res = await api('loadData', { email: currentUser.email, token: currentUser.token });
     if(res.data){
       state.investor = { ...DEFAULT_INVESTOR, ...res.data.investor, email: currentUser.email };
       state.riskAssessment = res.data.riskAssessment || null;
@@ -429,12 +442,11 @@ async function load(){
   } catch(e){ toast('Could not load your data — check your Apps Script URL / deployment'); }
   await loadBanner();
   render();
-  startDashboardPolling();
 }
 async function loadBanner(){
   if(!currentUser) return;
   try {
-    const res = await api('getMessages', { email: currentUser.email });
+    const res = await api('getMessages', { email: currentUser.email, token: currentUser.token });
     state.messages = res.messages || [];
   } catch(e){ /* non-critical */ }
   renderBanner();
@@ -446,27 +458,11 @@ function renderBanner(){
   box.style.display = 'flex';
   box.innerHTML = state.messages.map(m => `<div class="bmsg"><span class="dot"></span>${esc(m.message)}</div>`).join('');
 }
-// Silently re-pulls this investor's own data every 25s while on the Dashboard tab, so a SIP or
-// CAS upload added by the advisor (super-user) shows up automatically without a manual reload.
-function startDashboardPolling(){
-  if(dashboardPollTimer) clearInterval(dashboardPollTimer);
-  dashboardPollTimer = setInterval(async () => {
-    if(!currentUser || state.activeTab !== 'dashboard') return;
-    try {
-      const res = await api('loadData', { email: currentUser.email, password: currentUser.password });
-      if(res.data){
-        state.sips = res.data.sips || [];
-        state.holdings = res.data.holdings || [];
-        if(state.activeTab === 'dashboard') renderDashboard();
-      }
-    } catch(e){ /* ignore transient errors */ }
-  }, 25000);
-}
 async function persist(){
   if(!currentUser) return;
   try {
     await api('saveData', {
-      email: currentUser.email, password: currentUser.password,
+      email: currentUser.email, token: currentUser.token,
       investor: state.investor, riskAssessment: state.riskAssessment, sips: state.sips
     });
   } catch(e){ toast('Save failed — check your connection'); }
@@ -561,7 +557,7 @@ function render(){
 // Loads (and caches) the full client roster for the currently-signed-in super-user.
 async function fetchAllClients(force){
   if(allClients && !force) return allClients;
-  const res = await api('listClients', { email: currentUser.email, password: currentUser.password });
+  const res = await api('listClients', { email: currentUser.email, token: currentUser.token });
   allClients = res.clients || [];
   if(!adminSelectedEmail && allClients.length) adminSelectedEmail = allClients[0].email;
   return allClients;
@@ -690,7 +686,7 @@ async function renderAdvisor(){
   html += `<div class="mf-card">
     <h2 style="font-size:14px;margin:0 0 10px">5 &middot; Account controls for ${esc(sel.name||sel.email)}</h2>
     <div class="mf-row" style="align-items:flex-end">
-      <div class="mf-field" style="min-width:200px"><label>New password</label><input id="admin-new-pw" type="password" placeholder="min 6 characters"></div>
+      <div class="mf-field" style="min-width:200px"><label>New password</label><input id="admin-new-pw" type="password" placeholder="min 8 characters"></div>
       <button class="mf-btn ghost sm" id="btnAdminChangePw" style="margin-bottom:12px">Change password</button>
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
@@ -753,7 +749,7 @@ async function renderAdvisor(){
     btnRefresh.disabled = true;
     statusBox.innerHTML = `<div class="mf-sub" style="margin:0">Fetching AMFI's list — this can take 10–20 seconds…</div>`;
     try {
-      const res = await api('refreshFunds', {});
+      const res = await api('refreshFunds', { adminEmail: currentUser.email, adminToken: currentUser.token });
       statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Success.</strong> Loaded ${res.count} schemes into the Funds tab.</div>`;
     } catch(e){
       statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message || 'Unknown error')}</div>`;
@@ -767,7 +763,7 @@ async function renderAdvisor(){
     btnReminders.disabled = true;
     statusBox.innerHTML = `<div class="mf-sub" style="margin:0">Scheduling…</div>`;
     try {
-      const res = await api('setupReminderTrigger', {});
+      const res = await api('setupReminderTrigger', { adminEmail: currentUser.email, adminToken: currentUser.token });
       statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Done.</strong> ${esc(res.message || 'Reminders scheduled.')}</div>`;
     } catch(e){
       statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message || 'Unknown error')}</div>`;
@@ -1073,10 +1069,10 @@ function wireAdminConsoleHandlers(sel){
     btnAdminAddSip.disabled = true;
     try {
       if(editingId){
-        await api('adminUpdateSip', { adminEmail: currentUser.email, adminPassword: currentUser.password, targetEmail: sel.email, sip });
+        await api('adminUpdateSip', { adminEmail: currentUser.email, adminToken: currentUser.token, targetEmail: sel.email, sip });
         toast('SIP updated for ' + (sel.name||sel.email));
       } else {
-        await api('adminAddSip', { adminEmail: currentUser.email, adminPassword: currentUser.password, targetEmail: sel.email, sip });
+        await api('adminAddSip', { adminEmail: currentUser.email, adminToken: currentUser.token, targetEmail: sel.email, sip });
         toast('SIP added for ' + (sel.name||sel.email));
       }
       await fetchAllClients(true); render();
@@ -1123,7 +1119,7 @@ function wireAdminConsoleHandlers(sel){
       if(!confirm(`Remove this SIP for ${sel.name||sel.email}? This cannot be undone.`)) return;
       btn.disabled = true;
       try {
-        await api('adminDeleteSip', { adminEmail: currentUser.email, adminPassword: currentUser.password, targetEmail: sel.email, sipId: btn.dataset.sipDel });
+        await api('adminDeleteSip', { adminEmail: currentUser.email, adminToken: currentUser.token, targetEmail: sel.email, sipId: btn.dataset.sipDel });
         toast('SIP removed');
         await fetchAllClients(true); render();
       } catch(e){ toast('Could not remove: ' + (e.message||'')); btn.disabled = false; }
@@ -1146,7 +1142,7 @@ function wireAdminConsoleHandlers(sel){
     if(rows.length === 0){ statusBox.innerHTML = `<div class="notice warn" style="margin:0">Add at least one fund row with a name.</div>`; return; }
     const mode = document.getElementById('casAppendMode').checked ? 'append' : 'replace';
     try {
-      const res = await api('adminUploadCas', { adminEmail: currentUser.email, adminPassword: currentUser.password, targetEmail: sel.email, holdings: rows, mode });
+      const res = await api('adminUploadCas', { adminEmail: currentUser.email, adminToken: currentUser.token, targetEmail: sel.email, holdings: rows, mode });
       statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Uploaded.</strong> ${res.count} scheme(s) saved to this investor's CAS holdings.</div>`;
       toast('CAS uploaded for ' + (sel.name||sel.email));
       await fetchAllClients(true); render();
@@ -1157,9 +1153,9 @@ function wireAdminConsoleHandlers(sel){
   if(btnChangePw) btnChangePw.onclick = async () => {
     const statusBox = document.getElementById('adminAccountStatus');
     const pw = document.getElementById('admin-new-pw').value;
-    if(!pw || pw.length < 6){ statusBox.innerHTML = `<div class="notice warn" style="margin:0">Password must be at least 6 characters.</div>`; return; }
+    if(!pw || pw.length < 8){ statusBox.innerHTML = `<div class="notice warn" style="margin:0">Password must be at least 8 characters.</div>`; return; }
     try {
-      await api('adminChangePassword', { adminEmail: currentUser.email, adminPassword: currentUser.password, targetEmail: sel.email, newPassword: pw });
+      await api('adminChangePassword', { adminEmail: currentUser.email, adminToken: currentUser.token, targetEmail: sel.email, newPassword: pw });
       statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Password changed</strong> for ${esc(sel.email)}.</div>`;
       document.getElementById('admin-new-pw').value = '';
       toast('Password updated');
@@ -1170,7 +1166,7 @@ function wireAdminConsoleHandlers(sel){
   if(blockToggle) blockToggle.onchange = async () => {
     const statusBox = document.getElementById('adminAccountStatus');
     try {
-      await api('adminSetBlocked', { adminEmail: currentUser.email, adminPassword: currentUser.password, targetEmail: sel.email, blocked: blockToggle.checked });
+      await api('adminSetBlocked', { adminEmail: currentUser.email, adminToken: currentUser.token, targetEmail: sel.email, blocked: blockToggle.checked });
       statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>${blockToggle.checked?'Blocked':'Unblocked'}.</strong> ${esc(sel.email)} ${blockToggle.checked?'can no longer log in.':'can log in again.'}</div>`;
       toast(blockToggle.checked ? 'Investor blocked' : 'Investor unblocked');
       await fetchAllClients(true); render();
@@ -1184,7 +1180,7 @@ function wireAdminConsoleHandlers(sel){
     const message = document.getElementById('broadcast-message').value.trim();
     if(!message){ statusBox.innerHTML = `<div class="notice warn" style="margin:0">Enter a message first.</div>`; return; }
     try {
-      await api('adminBroadcast', { adminEmail: currentUser.email, adminPassword: currentUser.password, target, message });
+      await api('adminBroadcast', { adminEmail: currentUser.email, adminToken: currentUser.token, target, message });
       statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Posted.</strong></div>`;
       document.getElementById('broadcast-message').value = '';
       toast('Message posted');
@@ -1197,7 +1193,7 @@ async function loadBroadcastList(){
   const box = document.getElementById('broadcastList');
   if(!box) return;
   try {
-    const res = await api('adminListMessages', { adminEmail: currentUser.email, adminPassword: currentUser.password });
+    const res = await api('adminListMessages', { adminEmail: currentUser.email, adminToken: currentUser.token });
     const msgs = (res.messages||[]).filter(m=>m.active);
     if(msgs.length === 0){ box.innerHTML = `<div class="mf-sub">No active messages.</div>`; return; }
     box.innerHTML = `<div class="mf-sub" style="margin-bottom:6px">Active messages</div>` + msgs.map(m => `
@@ -1206,7 +1202,7 @@ async function loadBroadcastList(){
         <button class="mf-btn ghost sm" data-msgdel="${m.id}">Remove</button>
       </div>`).join('');
     box.querySelectorAll('[data-msgdel]').forEach(b => b.onclick = async () => {
-      try { await api('adminDeleteMessage', { adminEmail: currentUser.email, adminPassword: currentUser.password, id: b.dataset.msgdel }); toast('Message removed'); loadBroadcastList(); }
+      try { await api('adminDeleteMessage', { adminEmail: currentUser.email, adminToken: currentUser.token, id: b.dataset.msgdel }); toast('Message removed'); loadBroadcastList(); }
       catch(e){ toast('Could not remove: ' + (e.message||'')); }
     });
   } catch(e){ box.innerHTML = `<div class="notice warn">Couldn't load messages: ${esc(e.message||'')}</div>`; }
@@ -1284,7 +1280,7 @@ async function renderRequests(){
   const c = document.getElementById('mfContent');
   let html = `<h2>New Purchase Requests</h2><div class="mf-sub">New investment / additional purchase requests submitted by investors.</div>`;
   try {
-    const res = await api('adminListRequests', { adminEmail: currentUser.email, adminPassword: currentUser.password });
+    const res = await api('adminListRequests', { adminEmail: currentUser.email, adminToken: currentUser.token });
     const requests = res.requests || [];
     if(requests.length === 0){
       html += `<div class="mf-empty"><div class="big">—</div>No requests yet.</div>`;
@@ -1310,7 +1306,7 @@ async function renderRequests(){
   c.innerHTML = html;
   document.querySelectorAll('.req-status').forEach(sel => sel.onchange = async () => {
     try {
-      await api('adminUpdateRequestStatus', { adminEmail: currentUser.email, adminPassword: currentUser.password, id: sel.dataset.reqid, status: sel.value });
+      await api('adminUpdateRequestStatus', { adminEmail: currentUser.email, adminToken: currentUser.token, id: sel.dataset.reqid, status: sel.value });
       toast('Status updated');
     } catch(e){ toast('Could not update: ' + (e.message||'')); }
   });
@@ -1745,7 +1741,7 @@ async function renderInvest(){
     const mode = document.getElementById('myCasAppendMode').checked ? 'append' : 'replace';
     myBtnUploadCas.disabled = true;
     try {
-      const res = await api('uploadCas', { email: currentUser.email, password: currentUser.password, holdings: rows, mode });
+      const res = await api('uploadCas', { email: currentUser.email, token: currentUser.token, holdings: rows, mode });
       statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Updated.</strong> ${res.count} scheme(s) saved to your portfolio — check your Dashboard.</div>`;
       toast('Portfolio updated — showing your Dashboard');
       state.activeTab = 'dashboard';
@@ -1762,7 +1758,7 @@ async function renderInvest(){
     if(!fundName || !amount){ toast('Fund name and amount are required'); return; }
     try {
       await api('submitPurchaseRequest', {
-        email: currentUser.email, password: currentUser.password,
+        email: currentUser.email, token: currentUser.token,
         name: state.investor.name, type, fundName, amount, notes
       });
       toast('Request sent to your advisor');
@@ -2082,7 +2078,7 @@ document.getElementById('btnSignIn').onclick = async () => {
   if(!email || !pw){ showAuthError('Enter your email and password.'); return; }
   try {
     const res = await api('login', { email, password: pw });
-    currentUser = { email, password: pw };
+    currentUser = { email, token: res.token };
     isAdvisor = !!res.isAdvisor;
     sessionStorage.setItem('fc_session', JSON.stringify(currentUser));
     await enterApp();
@@ -2093,19 +2089,22 @@ document.getElementById('btnSignUp').onclick = async () => {
   const email = document.getElementById('authEmail').value.trim();
   const pw = document.getElementById('authPassword').value;
   if(!email || !pw){ showAuthError('Enter an email and password to create an account.'); return; }
-  if(pw.length < 6){ showAuthError('Password must be at least 6 characters.'); return; }
+  if(pw.length < 8){ showAuthError('Password must be at least 8 characters.'); return; }
   try {
-    await api('signup', { email, password: pw });
-    currentUser = { email, password: pw };
+    const res = await api('signup', { email, password: pw });
+    currentUser = { email, token: res.token };
     isAdvisor = false;
     sessionStorage.setItem('fc_session', JSON.stringify(currentUser));
     await enterApp();
   } catch(e){ showAuthError(e.message); }
 };
 document.getElementById('btnLogout').onclick = () => {
+  // Best-effort: invalidate the session server-side too, not just locally, so the token
+  // can't still be used if it were ever intercepted. Not awaited — logout shouldn't hang
+  // on the network.
+  if(currentUser && currentUser.token) api('logout', { token: currentUser.token }).catch(()=>{});
   sessionStorage.removeItem('fc_session');
   currentUser = null; isAdvisor = false; allClients = null; adminSelectedEmail = null;
-  if(dashboardPollTimer){ clearInterval(dashboardPollTimer); dashboardPollTimer = null; }
   destroyDashboardCharts();
   document.getElementById('mfapp').style.display = 'none';
   document.getElementById('mfAuthScreen').style.display = 'flex';
@@ -2118,14 +2117,16 @@ async function enterApp(){
   await load();
 }
 
-// Auto-resume a previous session (stored only for this browser tab)
+// Auto-resume a previous session (stored only for this browser tab). The client only ever
+// holds a session token now, never the password, so resuming just confirms the token is
+// still live (whoami) rather than logging in again.
 (async function resumeSession(){
   const saved = sessionStorage.getItem('fc_session');
   if(!saved) return;
   try {
-    const { email, password } = JSON.parse(saved);
-    const res = await api('login', { email, password });
-    currentUser = { email, password };
+    const { email, token } = JSON.parse(saved);
+    const res = await api('whoami', { token });
+    currentUser = { email: res.email, token };
     isAdvisor = !!res.isAdvisor;
     await enterApp();
   } catch(e){ sessionStorage.removeItem('fc_session'); }
