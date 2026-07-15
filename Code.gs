@@ -19,7 +19,8 @@
  *
  * "IsAdvisor" = TRUE makes that account a super-user / admin: they can add SIPs or CAS
  * holdings on behalf of any investor, change any investor's password, block/unblock logins,
- * post banner messages, view firm-wide AUM, and action New Purchase Requests.
+ * create/edit/delete any user account, flush a user's data, post banner messages, view
+ * firm-wide AUM, and action New Purchase Requests.
  *
  * Auth model: login/signup are the only two actions that ever see a raw password. Every
  * other action authenticates with a session token (issued at login/signup) instead — the
@@ -41,7 +42,7 @@
 // always confirm the deployed Web App is actually running what you just pasted — "Unknown
 // action" errors almost always mean you edited Code.gs but didn't create a NEW deployment
 // version (Deploy > Manage deployments > pencil icon > Version: New version > Deploy).
-const SCRIPT_VERSION = 'v13.0-2026-07-15-perf-indices-drilldown-flush';
+const SCRIPT_VERSION = 'v13.1-2026-07-15-user-management';
 
 function doPost(e) {
   let result;
@@ -77,6 +78,10 @@ function doPost(e) {
     else if (action === 'adminFlushHoldings') result = adminFlushHoldings(body);
     else if (action === 'adminChangePassword') result = adminChangePassword(body);
     else if (action === 'adminSetBlocked') result = adminSetBlocked(body);
+    else if (action === 'adminCreateUser') result = adminCreateUser(body);
+    else if (action === 'adminUpdateUser') result = adminUpdateUser(body);
+    else if (action === 'adminDeleteUser') result = adminDeleteUser(body);
+    else if (action === 'adminFlushUserData') result = adminFlushUserData(body);
     else if (action === 'adminBroadcast') result = adminBroadcast(body);
     else if (action === 'adminDeleteMessage') result = adminDeleteMessage(body);
     else if (action === 'adminListMessages') result = adminListMessages(body);
@@ -699,8 +704,11 @@ function listClients(email, token) {
   if (!admin.ok) return admin;
   const users = getUsersSheet().getDataRange().getValues();
   const blockedByEmail = {};
+  const advisorByEmail = {};
   for (let i = 1; i < users.length; i++) {
-    blockedByEmail[(users[i][0] || '').toString().toLowerCase()] = isBlocked(users[i]);
+    const key = (users[i][0] || '').toString().toLowerCase();
+    blockedByEmail[key] = isBlocked(users[i]);
+    advisorByEmail[key] = (users[i][2] === true || users[i][2] === 'TRUE');
   }
   const data = getClientsSheet().getDataRange().getValues();
   const clients = [];
@@ -713,10 +721,12 @@ function listClients(email, token) {
       name: d[1],
       phone: d[2],
       pan: d[3],
+      dob: d[4] || '',
       riskScore: d[5] || null,
       sips: d[7] ? JSON.parse(d[7]) : [],
       holdings: d[9] ? JSON.parse(d[9]) : [],
-      blocked: !!blockedByEmail[key]
+      blocked: !!blockedByEmail[key],
+      isAdvisor: !!advisorByEmail[key]
     });
   }
   return { ok: true, clients };
@@ -870,6 +880,124 @@ function adminSetBlocked(body) {
   }
   users.getRange(u.row, 4).setValue(!!body.blocked);
   return { ok: true };
+}
+
+/** Super-user: create a brand-new user account (investor or advisor) directly — they can
+ * sign in immediately with the password set here, no separate self-signup needed. */
+function adminCreateUser(body) {
+  const admin = requireAdmin(body.adminEmail, body.adminToken);
+  if (!admin.ok) return admin;
+  const email = (body.targetEmail || '').trim();
+  const password = body.newPassword || '';
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'A valid email is required' };
+  if (!password || password.length < 8) return { ok: false, error: 'Password must be at least 8 characters' };
+  const users = getUsersSheet();
+  if (findRow(users, email)) return { ok: false, error: 'An account with that email already exists' };
+  users.appendRow([email, makePasswordHash_(password), !!body.isAdvisor, false]);
+  getClientsSheet().appendRow([email, body.name || '', body.phone || '', body.pan || '', body.dob || '', '', '', '[]', new Date(), '[]']);
+  return { ok: true };
+}
+
+/** Super-user: edit an existing user's profile fields (name/phone/PAN/DOB) and/or their
+ * super-user (IsAdvisor) rights. Deliberately does NOT change the email address itself —
+ * it's the key every other sheet, session, message and request references, so renaming it
+ * safely would mean rewriting all of those; delete and recreate the account instead if an
+ * email was entered wrong. */
+function adminUpdateUser(body) {
+  const admin = requireAdmin(body.adminEmail, body.adminToken);
+  if (!admin.ok) return admin;
+  const targetEmail = (body.targetEmail || '').trim();
+  const users = getUsersSheet();
+  const u = findRow(users, targetEmail);
+  if (!u) return { ok: false, error: 'No such user account' };
+  if (body.isAdvisor !== undefined) {
+    const isSelf = targetEmail.toLowerCase() === (body.adminEmail || '').toLowerCase();
+    if (isSelf && !body.isAdvisor) return { ok: false, error: "You can't remove your own super-user rights" };
+    users.getRange(u.row, 3).setValue(!!body.isAdvisor);
+  }
+  const clientsSheet = getClientsSheet();
+  const c = clientRowFor(clientsSheet, targetEmail);
+  if (c) {
+    const row = c.data.slice();
+    if (body.name !== undefined) row[1] = body.name;
+    if (body.phone !== undefined) row[2] = body.phone;
+    if (body.pan !== undefined) row[3] = body.pan;
+    if (body.dob !== undefined) row[4] = body.dob;
+    clientsSheet.getRange(c.row, 1, 1, row.length).setValues([row]);
+  }
+  return { ok: true };
+}
+
+/** Super-user: permanently delete a user account — removes their Users row and their entire
+ * Clients row (profile, SIPs, holdings, risk data), plus any banner messages addressed
+ * specifically to them and any purchase requests they submitted. Cannot delete your own
+ * account. IRREVERSIBLE — the client confirms with the investor's email before calling this.
+ */
+function adminDeleteUser(body) {
+  const admin = requireAdmin(body.adminEmail, body.adminToken);
+  if (!admin.ok) return admin;
+  const targetEmail = (body.targetEmail || '').trim();
+  if (targetEmail.toLowerCase() === (body.adminEmail || '').toLowerCase()) {
+    return { ok: false, error: "You can't delete your own account" };
+  }
+  const users = getUsersSheet();
+  const u = findRow(users, targetEmail);
+  if (!u) return { ok: false, error: 'No such user account' };
+  users.deleteRow(u.row);
+  const clients = getClientsSheet();
+  const c = findRow(clients, targetEmail);
+  if (c) clients.deleteRow(c.row);
+  const messagesRemoved = deleteMessagesForUser_(targetEmail);
+  const requestsRemoved = deleteRequestsForUser_(targetEmail);
+  // Any live session tokens for this email stop working on their very next use — resolveSession_
+  // looks the email up in the Users sheet on every call and treats "not found" the same as blocked.
+  return { ok: true, messagesRemoved, requestsRemoved };
+}
+
+/** Super-user: wipe everything ASSOCIATED with a user — portfolio (SIPs + CAS holdings),
+ * risk profile, banner messages addressed to them, and their purchase requests — while
+ * leaving their login account itself intact so they can still sign in to a clean slate.
+ * Use adminDeleteUser instead if the account itself should be removed too. */
+function adminFlushUserData(body) {
+  const admin = requireAdmin(body.adminEmail, body.adminToken);
+  if (!admin.ok) return admin;
+  const targetEmail = (body.targetEmail || '').trim();
+  const clients = getClientsSheet();
+  const c = clientRowFor(clients, targetEmail);
+  if (!c) return { ok: false, error: 'No such investor account' };
+  const row = c.data.slice();
+  row[5] = '';       // RiskScore
+  row[6] = '';       // RiskDate
+  row[7] = '[]';     // SIPsJSON
+  row[8] = new Date();
+  row[9] = '[]';     // HoldingsJSON
+  clients.getRange(c.row, 1, 1, row.length).setValues([row]);
+  const messagesRemoved = deleteMessagesForUser_(targetEmail);
+  const requestsRemoved = deleteRequestsForUser_(targetEmail);
+  return { ok: true, messagesRemoved, requestsRemoved };
+}
+
+// Removes every banner message addressed specifically to this email (leaves firm-wide "ALL"
+// messages and any addressed to other investors untouched). Returns how many were removed.
+function deleteMessagesForUser_(email) {
+  const sheet = getMessagesSheet();
+  const data = sheet.getDataRange().getValues();
+  let count = 0;
+  for (let i = data.length - 1; i >= 1; i--) {
+    if ((data[i][1] || '').toString().toLowerCase() === (email || '').toLowerCase()) { sheet.deleteRow(i + 1); count++; }
+  }
+  return count;
+}
+
+// Removes every New Purchase Request submitted by this email. Returns how many were removed.
+function deleteRequestsForUser_(email) {
+  const sheet = getRequestsSheet();
+  const data = sheet.getDataRange().getValues();
+  let count = 0;
+  for (let i = data.length - 1; i >= 1; i--) {
+    if ((data[i][1] || '').toString().toLowerCase() === (email || '').toLowerCase()) { sheet.deleteRow(i + 1); count++; }
+  }
+  return count;
 }
 
 /** Super-user: post a banner message to one investor's email, or 'ALL' for everyone. */

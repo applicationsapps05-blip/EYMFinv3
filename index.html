@@ -589,7 +589,7 @@ async function fetchAllClients(force){
 async function renderAdvisor(){
   const c = document.getElementById('mfContent');
   let html = `<h2>Admin Console <span class="badge active-status" style="margin-left:4px">Super User</span></h2>
-  <div class="mf-sub">Act on behalf of any investor: add SIPs, upload CAS holdings, reset passwords, block logins, and post banner messages.</div>
+  <div class="mf-sub">Act on behalf of any investor: create or delete accounts, edit profiles, add SIPs, upload CAS holdings, reset passwords, block logins, flush all of a user's data, and post banner messages.</div>
   <div id="deployVersionBox" class="notice" style="margin-bottom:14px">Checking backend deployment version…</div>`;
 
   api('version', {}).then(res => {
@@ -614,23 +614,45 @@ async function renderAdvisor(){
   if(!adminSelectedEmail) adminSelectedEmail = clients[0].email;
   const sel = clients.find(x=>x.email===adminSelectedEmail) || clients[0];
 
+  // ---- Create a new user ----
+  html += `<div class="mf-card">
+    <h2 style="font-size:14px;margin:0 0 10px">1 &middot; Create a new user</h2>
+    <div class="mf-sub" style="margin-bottom:8px">Create an investor or advisor account directly — they can sign in immediately with the password you set here, no self-signup needed.</div>
+    <div class="mf-row">
+      <div class="mf-field" style="min-width:220px"><label>Email</label><input id="admin-newuser-email" type="email" placeholder="name@example.com"></div>
+      <div class="mf-field" style="min-width:180px"><label>Temporary password</label><input id="admin-newuser-pw" type="password" placeholder="min 8 characters"></div>
+      <div class="mf-field" style="min-width:180px"><label>Full name</label><input id="admin-newuser-name" placeholder="Investor's name"></div>
+    </div>
+    <div class="mf-row">
+      <div class="mf-field"><label>Phone</label><input id="admin-newuser-phone"></div>
+      <div class="mf-field"><label>PAN</label><input id="admin-newuser-pan" style="text-transform:uppercase"></div>
+      <div class="mf-field"><label>DOB</label><input id="admin-newuser-dob" type="date"></div>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin:4px 0 10px">
+      <input type="checkbox" id="admin-newuser-advisor"> Grant super-user (Admin Console) rights
+    </label>
+    <button class="mf-btn gold" id="btnAdminCreateUser">Create user</button>
+    <div id="adminCreateUserStatus" style="margin-top:8px"></div>
+  </div>`;
+
   // ---- Select investor + quick actions ----
   html += `<div class="mf-card">
-    <h2 style="font-size:14px;margin:0 0 10px">1 &middot; Select investor</h2>
+    <h2 style="font-size:14px;margin:0 0 10px">2 &middot; Select investor</h2>
     <div class="mf-field" style="max-width:360px">
       <label>Acting on behalf of</label>
-      <select id="adminUserSelect">${clients.map(cl=>`<option value="${esc(cl.email)}" ${cl.email===sel.email?'selected':''}>${esc(cl.name||'(no name)')} — ${esc(cl.email)}${cl.blocked?' (blocked)':''}</option>`).join('')}</select>
+      <select id="adminUserSelect">${clients.map(cl=>`<option value="${esc(cl.email)}" ${cl.email===sel.email?'selected':''}>${esc(cl.name||'(no name)')} — ${esc(cl.email)}${cl.blocked?' (blocked)':''}${cl.isAdvisor?' (admin)':''}</option>`).join('')}</select>
     </div>
     <div class="mf-row" style="margin-top:6px;font-size:12px;color:rgba(28,43,57,0.65)">
       <div>SIPs: <strong>${(sel.sips||[]).length}</strong></div>
       <div>CAS holdings: <strong>${(sel.holdings||[]).length}</strong></div>
       <div>Status: ${sel.blocked?'<span class="badge blocked">Blocked</span>':'<span class="badge active-status">Active</span>'}</div>
+      <div>Rights: ${sel.isAdvisor?'<span class="badge active-status">Super user</span>':'Investor'}</div>
     </div>
   </div>`;
 
   // ---- Existing SIPs for this investor ----
   html += `<div class="mf-card" style="overflow-x:auto">
-    <h2 style="font-size:14px;margin:0 0 10px">2 &middot; Existing SIPs for ${esc(sel.name||sel.email)}</h2>
+    <h2 style="font-size:14px;margin:0 0 10px">3 &middot; Existing SIPs for ${esc(sel.name||sel.email)}</h2>
     ${(sel.sips||[]).length === 0 ? `<div class="mf-sub" style="margin:0">No SIPs recorded for this investor yet — add one below.</div>` : `
     <table class="mf-table"><thead><tr>
       <th>Fund</th><th>Type</th><th>Frequency</th><th>Amount</th><th>Start</th><th>NAV</th><th>Units</th><th>Folio</th><th></th>
@@ -651,7 +673,7 @@ async function renderAdvisor(){
 
   // ---- Add / edit a SIP on behalf of user ----
   html += `<div class="mf-card">
-    <h2 style="font-size:14px;margin:0 0 10px" id="adminSipFormTitle">3 &middot; Add a SIP for ${esc(sel.name||sel.email)}</h2>
+    <h2 style="font-size:14px;margin:0 0 10px" id="adminSipFormTitle">4 &middot; Add a SIP for ${esc(sel.name||sel.email)}</h2>
     <input type="hidden" id="admin-sip-editing-id" value="">
     <div class="mf-row">
       <div class="mf-field" style="flex:2;min-width:220px;position:relative">
@@ -688,7 +710,7 @@ async function renderAdvisor(){
 
   // ---- Upload CAS on behalf of user ----
   html += `<div class="mf-card">
-    <h2 style="font-size:14px;margin:0 0 4px">4 &middot; Upload CAS holdings for ${esc(sel.name||sel.email)}</h2>
+    <h2 style="font-size:14px;margin:0 0 4px">5 &middot; Upload CAS holdings for ${esc(sel.name||sel.email)}</h2>
     <div class="mf-sub" style="margin-bottom:8px">Upload their Consolidated Account Statement PDF from MF Central/CAMS/KFintech and it'll auto-fill the rows below — check them over, then confirm the upload. You can also add or edit rows by hand.</div>
     <div class="mf-row" style="align-items:flex-end">
       <div class="mf-field" style="min-width:220px"><label>CAS PDF file</label><input type="file" id="casPdfFile" accept="application/pdf"></div>
@@ -710,23 +732,47 @@ async function renderAdvisor(){
     </div>
   </div>`;
 
-  // ---- Change password / block ----
+  // ---- Account controls: profile, password, rights, danger zone ----
+  const canEditRights = sel.email.toLowerCase() !== currentUser.email.toLowerCase();
   html += `<div class="mf-card">
-    <h2 style="font-size:14px;margin:0 0 10px">5 &middot; Account controls for ${esc(sel.name||sel.email)}</h2>
-    <div class="mf-row" style="align-items:flex-end">
-      <div class="mf-field" style="min-width:200px"><label>New password</label><input id="admin-new-pw" type="password" placeholder="min 8 characters"></div>
-      <button class="mf-btn ghost sm" id="btnAdminChangePw" style="margin-bottom:12px">Change password</button>
+    <h2 style="font-size:14px;margin:0 0 10px">6 &middot; Account controls for ${esc(sel.name||sel.email)}</h2>
+    <div class="mf-row">
+      <div class="mf-field" style="min-width:180px"><label>Full name</label><input id="admin-edit-name" value="${esc(sel.name||'')}"></div>
+      <div class="mf-field"><label>Phone</label><input id="admin-edit-phone" value="${esc(sel.phone||'')}"></div>
+      <div class="mf-field"><label>PAN</label><input id="admin-edit-pan" style="text-transform:uppercase" value="${esc(sel.pan||'')}"></div>
+      <div class="mf-field"><label>DOB</label><input id="admin-edit-dob" type="date" value="${esc(sel.dob?String(sel.dob).slice(0,10):'')}"></div>
     </div>
-    <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
-      <label class="mf-toggle"><input type="checkbox" id="admin-block-toggle" ${sel.blocked?'checked':''}><span class="slider"></span></label>
-      <span style="font-size:12.5px">${sel.blocked?'Blocked — this investor cannot log in':'Active — allow this investor to log in'}</span>
+    <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin:2px 0 10px${canEditRights?'':';opacity:0.5'}">
+      <input type="checkbox" id="admin-edit-advisor" ${sel.isAdvisor?'checked':''} ${canEditRights?'':'disabled'}> Super-user (Admin Console) rights${canEditRights?'':' — can\'t change your own'}
+    </label>
+    <button class="mf-btn gold" id="btnAdminSaveProfile">Save profile changes</button>
+    <div id="adminProfileStatus" style="margin-top:8px"></div>
+
+    <div style="border-top:1px solid var(--line);margin-top:16px;padding-top:12px">
+      <div class="mf-row" style="align-items:flex-end">
+        <div class="mf-field" style="min-width:200px"><label>New password</label><input id="admin-new-pw" type="password" placeholder="min 8 characters"></div>
+        <button class="mf-btn ghost sm" id="btnAdminChangePw" style="margin-bottom:12px">Reset password</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+        <label class="mf-toggle"><input type="checkbox" id="admin-block-toggle" ${sel.blocked?'checked':''}><span class="slider"></span></label>
+        <span style="font-size:12.5px">${sel.blocked?'Blocked — this investor cannot log in':'Active — allow this investor to log in'}</span>
+      </div>
+      <div id="adminAccountStatus" style="margin-top:8px"></div>
     </div>
-    <div id="adminAccountStatus" style="margin-top:8px"></div>
+
+    <div style="border-top:1px solid var(--line);margin-top:16px;padding-top:12px">
+      <div class="mf-sub" style="margin:0 0 8px"><strong style="color:var(--maroon)">Danger zone.</strong> These act on ${esc(sel.name||sel.email)}'s account and cannot be undone.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="mf-btn ghost sm" id="btnAdminFlushUserData" style="border-color:var(--maroon);color:var(--maroon)">Flush all data (portfolio, SIPs, messages, alerts, requests)</button>
+        ${canEditRights ? `<button class="mf-btn ghost sm" id="btnAdminDeleteUser" style="border-color:var(--maroon);color:var(--maroon)">Delete this user permanently</button>` : ''}
+      </div>
+      <div id="adminDangerStatus" style="margin-top:8px"></div>
+    </div>
   </div>`;
 
   // ---- Broadcast message ----
   html += `<div class="mf-card">
-    <h2 style="font-size:14px;margin:0 0 10px">6 &middot; Post a banner message</h2>
+    <h2 style="font-size:14px;margin:0 0 10px">7 &middot; Post a banner message</h2>
     <div class="mf-row">
       <div class="mf-field" style="min-width:220px"><label>Send to</label>
         <select id="broadcast-target"><option value="ALL">All investors</option>${clients.map(cl=>`<option value="${esc(cl.email)}">${esc(cl.name||cl.email)}</option>`).join('')}</select></div>
@@ -756,13 +802,13 @@ async function renderAdvisor(){
   const rows = clients.map(d => {
     const r = d.riskScore ? scoreToCategory(Number(d.riskScore)) : null;
     const monthly = (d.sips||[]).reduce((s,x)=> s + (x.frequency==='Monthly'?Number(x.amount||0):x.frequency==='Weekly'?Number(x.amount||0)*4.33:x.frequency==='Quarterly'?Number(x.amount||0)/3:Number(x.amount||0)*30), 0);
-    return { name: d.name || '(no name)', email: d.email || '—', cat: r ? r.cat : '—', sips: (d.sips||[]).length, holdings:(d.holdings||[]).length, monthly: Math.round(monthly), blocked: d.blocked };
+    return { name: d.name || '(no name)', email: d.email || '—', cat: r ? r.cat : '—', sips: (d.sips||[]).length, holdings:(d.holdings||[]).length, monthly: Math.round(monthly), blocked: d.blocked, isAdvisor: d.isAdvisor };
   });
   html += `<div class="mf-card" style="overflow-x:auto"><h2 style="font-size:14px;margin:0 0 10px">Full investor roster</h2><table class="mf-table"><thead><tr>
-    <th>Investor</th><th>Email</th><th>Risk Category</th><th>SIPs</th><th>CAS Holdings</th><th>Monthly Outflow</th><th>Status</th>
+    <th>Investor</th><th>Email</th><th>Risk Category</th><th>SIPs</th><th>CAS Holdings</th><th>Monthly Outflow</th><th>Status</th><th>Rights</th>
   </tr></thead><tbody>`;
   rows.forEach(r => {
-    html += `<tr><td>${esc(r.name)}</td><td>${esc(r.email)}</td><td>${esc(r.cat)}</td><td class="num">${r.sips}</td><td class="num">${r.holdings}</td><td class="num">₹${r.monthly.toLocaleString('en-IN')}</td><td>${r.blocked?'<span class="badge blocked">Blocked</span>':'<span class="badge active-status">Active</span>'}</td></tr>`;
+    html += `<tr><td>${esc(r.name)}</td><td>${esc(r.email)}</td><td>${esc(r.cat)}</td><td class="num">${r.sips}</td><td class="num">${r.holdings}</td><td class="num">₹${r.monthly.toLocaleString('en-IN')}</td><td>${r.blocked?'<span class="badge blocked">Blocked</span>':'<span class="badge active-status">Active</span>'}</td><td>${r.isAdvisor?'<span class="badge active-status">Super user</span>':'Investor'}</td></tr>`;
   });
   html += `</tbody></table></div>`;
 
@@ -1084,6 +1130,31 @@ function wireAdminConsoleHandlers(sel){
   const userSelect = document.getElementById('adminUserSelect');
   if(userSelect) userSelect.onchange = () => { adminSelectedEmail = userSelect.value; renderAdvisor(); };
 
+  const btnCreateUser = document.getElementById('btnAdminCreateUser');
+  if(btnCreateUser) btnCreateUser.onclick = async () => {
+    const statusBox = document.getElementById('adminCreateUserStatus');
+    const email = document.getElementById('admin-newuser-email').value.trim();
+    const pw = document.getElementById('admin-newuser-pw').value;
+    const name = document.getElementById('admin-newuser-name').value.trim();
+    const phone = document.getElementById('admin-newuser-phone').value.trim();
+    const pan = document.getElementById('admin-newuser-pan').value.trim();
+    const dob = document.getElementById('admin-newuser-dob').value;
+    const isAdvisor = document.getElementById('admin-newuser-advisor').checked;
+    if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ statusBox.innerHTML = `<div class="notice warn" style="margin:0">Enter a valid email.</div>`; return; }
+    if(!pw || pw.length < 8){ statusBox.innerHTML = `<div class="notice warn" style="margin:0">Password must be at least 8 characters.</div>`; return; }
+    btnCreateUser.disabled = true;
+    try {
+      await api('adminCreateUser', { adminEmail: currentUser.email, adminToken: currentUser.token, targetEmail: email, newPassword: pw, name, phone, pan, dob, isAdvisor });
+      statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Created.</strong> ${esc(email)} can sign in now.</div>`;
+      toast('User created');
+      ['admin-newuser-email','admin-newuser-pw','admin-newuser-name','admin-newuser-phone','admin-newuser-pan','admin-newuser-dob'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+      document.getElementById('admin-newuser-advisor').checked = false;
+      adminSelectedEmail = email;
+      await fetchAllClients(true); render();
+    } catch(e){ statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message||'')}</div>`; }
+    finally { btnCreateUser.disabled = false; }
+  };
+
   const btnAddRow = document.getElementById('btnAddCasRow');
   if(btnAddRow) btnAddRow.onclick = () => addCasRow();
 
@@ -1226,6 +1297,56 @@ function wireAdminConsoleHandlers(sel){
       toast(blockToggle.checked ? 'Investor blocked' : 'Investor unblocked');
       await fetchAllClients(true); render();
     } catch(e){ statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message||'')}</div>`; blockToggle.checked = !blockToggle.checked; }
+  };
+
+  const btnSaveProfile = document.getElementById('btnAdminSaveProfile');
+  if(btnSaveProfile) btnSaveProfile.onclick = async () => {
+    const statusBox = document.getElementById('adminProfileStatus');
+    const advisorEl = document.getElementById('admin-edit-advisor');
+    const payload = {
+      adminEmail: currentUser.email, adminToken: currentUser.token, targetEmail: sel.email,
+      name: document.getElementById('admin-edit-name').value.trim(),
+      phone: document.getElementById('admin-edit-phone').value.trim(),
+      pan: document.getElementById('admin-edit-pan').value.trim(),
+      dob: document.getElementById('admin-edit-dob').value
+    };
+    if(advisorEl && !advisorEl.disabled) payload.isAdvisor = advisorEl.checked;
+    btnSaveProfile.disabled = true;
+    try {
+      await api('adminUpdateUser', payload);
+      statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Saved.</strong></div>`;
+      toast('Profile updated');
+      await fetchAllClients(true); render();
+    } catch(e){ statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message||'')}</div>`; }
+    finally { btnSaveProfile.disabled = false; }
+  };
+
+  const btnFlushUserData = document.getElementById('btnAdminFlushUserData');
+  if(btnFlushUserData) btnFlushUserData.onclick = async () => {
+    const statusBox = document.getElementById('adminDangerStatus');
+    if(!confirm(`This permanently deletes ALL data for ${sel.name||sel.email} — SIPs, CAS holdings, risk profile, banner messages addressed to them, and their purchase requests. Their login stays active but starts from a clean slate. This cannot be undone. Continue?`)) return;
+    btnFlushUserData.disabled = true;
+    try {
+      const res = await api('adminFlushUserData', { adminEmail: currentUser.email, adminToken: currentUser.token, targetEmail: sel.email });
+      statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Flushed.</strong> Portfolio cleared${res.messagesRemoved?`, ${res.messagesRemoved} message(s) removed`:''}${res.requestsRemoved?`, ${res.requestsRemoved} request(s) removed`:''}.</div>`;
+      toast('All data flushed for ' + (sel.name||sel.email));
+      await fetchAllClients(true); render();
+    } catch(e){ statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message||'')}</div>`; btnFlushUserData.disabled = false; }
+  };
+
+  const btnDeleteUser = document.getElementById('btnAdminDeleteUser');
+  if(btnDeleteUser) btnDeleteUser.onclick = async () => {
+    const statusBox = document.getElementById('adminDangerStatus');
+    const typed = prompt(`This PERMANENTLY deletes the account for ${sel.name||sel.email} — profile, SIPs, CAS holdings, messages, and requests. This cannot be undone.\n\nType their email address to confirm: ${sel.email}`);
+    if(typed === null) return;
+    if(typed.trim().toLowerCase() !== sel.email.toLowerCase()){ statusBox.innerHTML = `<div class="notice warn" style="margin:0">Email didn't match — nothing was deleted.</div>`; return; }
+    btnDeleteUser.disabled = true;
+    try {
+      await api('adminDeleteUser', { adminEmail: currentUser.email, adminToken: currentUser.token, targetEmail: sel.email });
+      toast('User deleted');
+      adminSelectedEmail = null;
+      await fetchAllClients(true); render();
+    } catch(e){ statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message||'')}</div>`; btnDeleteUser.disabled = false; }
   };
 
   const btnBroadcast = document.getElementById('btnPostBroadcast');

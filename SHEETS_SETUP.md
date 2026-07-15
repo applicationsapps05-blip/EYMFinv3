@@ -72,10 +72,12 @@ will redeploy automatically within a minute or two.
 2. Open the Google Sheet, go to the **Users** tab, find your row, and change
    `IsAdvisor` from `false`/blank to `TRUE`.
 3. Reload the app and log in again — you'll now see three extra tabs:
-   - **Admin Console** — pick any investor from the dropdown, then add a SIP
-     on their behalf, upload their CAS holdings, reset their password,
-     block/unblock their login, and post a banner message to one or all
-     investors.
+   - **Admin Console** — create, edit, or permanently delete any user account;
+     pick any investor from the dropdown, then add a SIP on their behalf,
+     upload their CAS holdings, reset their password, grant/revoke super-user
+     rights, block/unblock their login, flush all of their data (portfolio,
+     SIPs, messages, requests) at once, and post a banner message to one or
+     all investors.
    - **AUM** — firm-wide total invested / present value, with drill-down by
      investor and by fund.
    - **Purchase Requests** — every "New Investment / Additional Purchase"
