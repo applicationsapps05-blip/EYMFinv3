@@ -80,6 +80,25 @@
 .mf-companybar .contact { font-family: 'IBM Plex Mono', monospace; }
 .mf-companybar .contact a { color: var(--ink); text-decoration: none; }
 
+.mf-index-ticker { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.mf-index-ticker .idx-chip {
+  background: rgba(241,236,221,0.08);
+  border: 1px solid rgba(241,236,221,0.18);
+  border-radius: 6px;
+  padding: 5px 10px;
+  min-width: 84px;
+  text-align: right;
+}
+.mf-index-ticker.on-paper .idx-chip { background: rgba(28,43,57,0.04); border-color: var(--line); }
+.mf-index-ticker .idx-chip .idx-label { font-size: 9.5px; letter-spacing: 0.5px; text-transform: uppercase; opacity: 0.7; }
+.mf-index-ticker .idx-chip .idx-price { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; font-weight: 600; margin-top: 1px; }
+.mf-index-ticker .idx-chip .idx-change { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; margin-top: 1px; }
+.mf-index-ticker .idx-chip .idx-change.up { color: #6FBF9A; }
+.mf-index-ticker .idx-chip .idx-change.down { color: #E08A8A; }
+.mf-index-ticker.on-paper .idx-chip .idx-change.up { color: var(--teal); }
+.mf-index-ticker.on-paper .idx-chip .idx-change.down { color: var(--maroon); }
+.mf-dashboard-top { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px; }
+
 .mf-body { display: flex; flex: 1; min-height: 0; }
 
 .mf-tabs {
@@ -290,7 +309,8 @@ table.mf-table tr:hover td { background: rgba(169,127,31,0.06); }
 }
 </style>
 
-<div id="mfAuthScreen" class="mfapp" style="display:flex;align-items:center;justify-content:center;min-height:640px">
+<div id="mfAuthScreen" class="mfapp" style="display:flex;align-items:center;justify-content:center;min-height:640px;position:relative">
+  <div id="authIndexTicker" class="mf-index-ticker on-paper" style="position:absolute;top:16px;right:16px;max-width:260px"></div>
   <div style="max-width:340px;width:100%;padding:30px">
     <div style="text-align:center;margin-bottom:22px">
       <div style="font-family:'Fraunces',serif;font-size:20px;color:#10263A;font-weight:600;line-height:1.3">Engineering Your Financial Freedom</div>
@@ -426,6 +446,9 @@ let state = {
 let allClients = null; // admin-only cache of every investor's data
 let adminSelectedEmail = null; // which investor the Admin Console is currently acting on
 let dashboardChartInstances = [];
+let dashboardGroupBy = 'scheme'; // 'scheme' | 'amc' | 'category' | 'region' — Dashboard drilldown level
+let lastDashboardRows = [];
+let lastDashboardTotalValue = 0;
 
 async function load(){
   if(!currentUser) return;
@@ -680,6 +703,11 @@ async function renderAdvisor(){
     </div>
     <button class="mf-btn gold" id="btnUploadCas">Upload CAS for this investor</button>
     <div id="adminCasStatus" style="margin-top:8px"></div>
+    <div style="border-top:1px solid var(--line);margin-top:16px;padding-top:12px">
+      <div class="mf-sub" style="margin:0 0 6px">Starting this investor fresh instead? Clear all their existing holdings before uploading a corrected CAS.</div>
+      <button class="mf-btn ghost sm" id="btnAdminFlushHoldings" style="border-color:var(--maroon);color:var(--maroon)">Flush all holdings for ${esc(sel.name||sel.email)}</button>
+      <div id="adminFlushStatus" style="margin-top:8px"></div>
+    </div>
   </div>`;
 
   // ---- Change password / block ----
@@ -712,8 +740,9 @@ async function renderAdvisor(){
   // ---- Tools ----
   html += `<div class="mf-card">
     <h2 style="font-size:14px;margin:0 0 4px">AMFI Fund List</h2>
-    <div class="mf-sub" style="margin-bottom:10px">Pulls the full scheme list from AMFI into the "Funds" tab. Runs automatically once a day, but you can force it here.</div>
+    <div class="mf-sub" style="margin-bottom:10px">Pulls the full scheme list from AMFI into the "Funds" tab. A stale list is now served instantly instead of blocking a live page load — click below once to schedule an automatic background refresh (~3 AM daily) so it stays fresh without anyone waiting on it.</div>
     <button class="mf-btn ghost sm" id="btnRefreshFunds">Refresh Fund List Now</button>
+    <button class="mf-btn ghost sm" id="btnEnableFundRefresh">Enable automatic daily refresh</button>
     <div id="fundRefreshStatus" style="margin-top:10px"></div>
   </div>`;
   html += `<div class="mf-card">
@@ -755,6 +784,19 @@ async function renderAdvisor(){
       statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message || 'Unknown error')}</div>`;
     }
     btnRefresh.disabled = false;
+  };
+
+  const btnEnableFundRefresh = document.getElementById('btnEnableFundRefresh');
+  if(btnEnableFundRefresh) btnEnableFundRefresh.onclick = async () => {
+    const statusBox = document.getElementById('fundRefreshStatus');
+    btnEnableFundRefresh.disabled = true;
+    try {
+      const res = await api('setupFundRefreshTrigger', { adminEmail: currentUser.email, adminToken: currentUser.token });
+      statusBox.innerHTML = `<div class="notice" style="margin:0"><strong>Done.</strong> ${esc(res.message || 'Background refresh scheduled.')}</div>`;
+    } catch(e){
+      statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message || 'Unknown error')}</div>`;
+    }
+    btnEnableFundRefresh.disabled = false;
   };
 
   const btnReminders = document.getElementById('btnEnableReminders');
@@ -1149,6 +1191,19 @@ function wireAdminConsoleHandlers(sel){
     } catch(e){ statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message||'')}</div>`; }
   };
 
+  const btnAdminFlush = document.getElementById('btnAdminFlushHoldings');
+  if(btnAdminFlush) btnAdminFlush.onclick = async () => {
+    const statusBox = document.getElementById('adminFlushStatus');
+    if(!confirm(`This permanently deletes every CAS holding on record for ${sel.name||sel.email} (their SIPs are untouched). This cannot be undone. Continue?`)) return;
+    btnAdminFlush.disabled = true;
+    try {
+      await api('adminFlushHoldings', { adminEmail: currentUser.email, adminToken: currentUser.token, targetEmail: sel.email });
+      statusBox.innerHTML = `<div class="notice" style="margin:0">Cleared. Upload a fresh CAS above whenever you're ready.</div>`;
+      toast('Holdings cleared for ' + (sel.name||sel.email));
+      await fetchAllClients(true); render();
+    } catch(e){ statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message||'')}</div>`; btnAdminFlush.disabled = false; }
+  };
+
   const btnChangePw = document.getElementById('btnAdminChangePw');
   if(btnChangePw) btnChangePw.onclick = async () => {
     const statusBox = document.getElementById('adminAccountStatus');
@@ -1342,27 +1397,40 @@ async function computePositions(sips, holdings){
     return (v !== null && v !== undefined && v !== '') ? Number(v) : Number(fallback||0);
   };
 
-  const sipRows = await Promise.all(sips.map(async s => {
-    const nav = liveNav(s.fundName, s.nav);
-    // Present value = actual units bought each installment (at that day's real NAV) × today's NAV —
-    // not a manually-entered "units" figure, whenever we have a scheme code to look up real history.
-    if(s.schemeCode){
-      try {
-        const acc = await api('computeSipAccumulation', {
-          schemeCode: s.schemeCode, startDate: s.startDate, frequency: s.frequency, amount: s.amount,
+  // PERF: one batched backend call for every SIP's accumulation instead of one call per SIP —
+  // opening the Dashboard with, say, 6 SIPs used to mean 6 separate round-trips to Apps
+  // Script just for this step. computeSipAccumulationBatch returns all of them from a single
+  // request/response, keyed by SIP id.
+  const withSchemeCode = sips.filter(s => s.schemeCode);
+  let batchResults = {};
+  if(withSchemeCode.length){
+    try {
+      const batchRes = await api('computeSipAccumulationBatch', {
+        sips: withSchemeCode.map(s => ({
+          id: s.id, schemeCode: s.schemeCode, startDate: s.startDate, frequency: s.frequency, amount: s.amount,
           asOfDate: s.asOfDate || null,
           asOfInvested: (s.asOfInvested === null || s.asOfInvested === undefined) ? null : s.asOfInvested,
           asOfMarketValue: (s.asOfMarketValue === null || s.asOfMarketValue === undefined) ? null : s.asOfMarketValue
-        });
-        const units = acc.totalUnits;
-        const invested = s.investedTotal ? Number(s.investedTotal) : acc.totalInvested;
-        const currentValue = nav * units;
-        return { id:s.id, fundName:s.fundName, schemeType:s.schemeType||'Other', source:'SIP', units, nav, currentValue, invested,
-          gain: currentValue-invested, gainPct: invested>0 ? ((currentValue-invested)/invested*100) : 0,
-          navIsLive: navs[s.fundName]!==null && navs[s.fundName]!==undefined && navs[s.fundName]!=='',
-          folio:s.folio, frequency:s.frequency, amount:s.amount, startDate:s.startDate, computedFromHistory:true,
-          usedAsOf: !!acc.usedAsOf, asOfDate: s.asOfDate || null, newInstallments: acc.installments };
-      } catch(e){ /* fall through to estimate below */ }
+        }))
+      });
+      batchResults = batchRes.results || {};
+    } catch(e){ /* fall through to per-row estimate below for every SIP */ }
+  }
+
+  const sipRows = sips.map(s => {
+    const nav = liveNav(s.fundName, s.nav);
+    // Present value = actual units bought each installment (at that day's real NAV) × today's NAV —
+    // not a manually-entered "units" figure, whenever we have a scheme code to look up real history.
+    const acc = s.schemeCode ? batchResults[s.id] : null;
+    if(acc && acc.ok){
+      const units = acc.totalUnits;
+      const invested = s.investedTotal ? Number(s.investedTotal) : acc.totalInvested;
+      const currentValue = nav * units;
+      return { id:s.id, fundName:s.fundName, schemeType:s.schemeType||'Other', source:'SIP', units, nav, currentValue, invested,
+        gain: currentValue-invested, gainPct: invested>0 ? ((currentValue-invested)/invested*100) : 0,
+        navIsLive: navs[s.fundName]!==null && navs[s.fundName]!==undefined && navs[s.fundName]!=='',
+        folio:s.folio, frequency:s.frequency, amount:s.amount, startDate:s.startDate, computedFromHistory:true,
+        usedAsOf: !!acc.usedAsOf, asOfDate: s.asOfDate || null, newInstallments: acc.installments };
     }
     const units = Number(s.units||0);
     const currentValue = nav * units;
@@ -1371,7 +1439,7 @@ async function computePositions(sips, holdings){
       gain: currentValue-invested, gainPct: invested>0 ? ((currentValue-invested)/invested*100) : 0,
       navIsLive: navs[s.fundName]!==null && navs[s.fundName]!==undefined && navs[s.fundName]!=='',
       folio:s.folio, frequency:s.frequency, amount:s.amount, startDate:s.startDate, computedFromHistory:false };
-  }));
+  });
 
   const holdingRows = holdings.map(h => {
     const nav = liveNav(h.fundName, h.nav);
@@ -1382,6 +1450,63 @@ async function computePositions(sips, holdings){
       navIsLive: navs[h.fundName]!==null && navs[h.fundName]!==undefined && navs[h.fundName]!=='', folio:h.folio, computedFromHistory:true };
   });
   return { rows: [...sipRows, ...holdingRows], fetchError };
+}
+
+// ---------- Fund classification for the Dashboard drilldown levels ----------
+// Indian mutual fund scheme names are fairly conventional (AMC name first, then category
+// words), so this is a best-effort text-based classifier — good enough to group a portfolio
+// for a drilldown view, not a substitute for the AMC's official categorization.
+const KNOWN_AMCS = [
+  'Aditya Birla Sun Life','Axis','Bandhan','Bank of India','Baroda BNP Paribas','Canara Robeco',
+  'DSP','Edelweiss','Franklin India','Franklin Templeton','Groww','HDFC','Helios','HSBC','ICICI Prudential',
+  'IDBI','IIFL','Invesco India','ITI','JM Financial','Kotak','LIC','Mahindra Manulife','Mirae Asset',
+  'Motilal Oswal','Navi','Nippon India','NJ','Old Bridge','PGIM India','Parag Parikh','PPFAS','Quant',
+  'Quantum','Samco','SBI','Shriram','Sundaram','Tata','Taurus','Trust','Union','UTI','WhiteOak Capital',
+  'Zerodha','360 ONE','Bajaj Finserv','Angel One'
+];
+const INTL_KEYWORDS = ['US ','U.S.','Nasdaq','S&P 500','S&P500','China','Global','International','Overseas',
+  'World','Emerging Market','Europe','Japan','Asia Pacific','Hang Seng','FTSE','Fund of Fund','FoF'];
+const CATEGORY_RULES = [
+  { cat: 'International / Global', kws: INTL_KEYWORDS },
+  { cat: 'Debt', kws: ['Overnight','Liquid','Ultra Short','Low Duration','Money Market','Short Duration','Medium Duration','Dynamic Bond','Corporate Bond','Credit Risk','Banking and PSU','Gilt','Floater','Debt'] },
+  { cat: 'Hybrid / Asset Allocation', kws: ['Aggressive Hybrid','Balanced Advantage','Conservative Hybrid','Multi Asset','Arbitrage','Equity Savings','Hybrid','Balanced'] },
+  { cat: 'Gold / Commodity', kws: ['Gold','Silver','Commodit'] },
+  { cat: 'Index / ETF', kws: ['Index Fund','Index Fund','Nifty ','Sensex','ETF'] },
+  { cat: 'ELSS / Tax Saver', kws: ['ELSS','Tax Saver','Tax Shield','Long Term Equity'] },
+  { cat: 'Small Cap', kws: ['Small Cap'] },
+  { cat: 'Mid Cap', kws: ['Mid Cap','Midcap'] },
+  { cat: 'Large Cap', kws: ['Large Cap','Bluechip','Blue Chip'] },
+  { cat: 'Large & Mid Cap', kws: ['Large & Mid','Large and Mid'] },
+  { cat: 'Flexi / Multi Cap', kws: ['Flexi Cap','Multi Cap','Multicap'] },
+  { cat: 'Sectoral / Thematic', kws: ['Sector','Thematic','Digital','Infrastructure','Pharma','Banking','Technology','Healthcare','Consumption','Manufacturing','PSU'] },
+  { cat: 'Focused / Value / Contra', kws: ['Focused','Value Fund','Contra','Dividend Yield'] }
+];
+function classifyFund(fundName){
+  const name = (fundName || '').toString();
+  const lower = name.toLowerCase();
+  const amc = KNOWN_AMCS.find(a => lower.indexOf(a.toLowerCase()) === 0) || (name.split(/\s+/).slice(0,2).join(' ') || 'Other');
+  let category = 'Other / Uncategorized';
+  for(const rule of CATEGORY_RULES){
+    if(rule.kws.some(kw => lower.indexOf(kw.toLowerCase()) !== -1)){ category = rule.cat; break; }
+  }
+  const region = (category === 'International / Global') ? 'International' : 'Domestic';
+  return { amc, category, region };
+}
+
+// Groups dashboard rows by a drilldown level ('amc' | 'category' | 'region') and returns
+// aggregated groups (sorted by current value desc), each carrying its member scheme rows so
+// the UI can expand a group back down to individual schemes.
+function groupDashboardRows(rows, level){
+  const groups = {};
+  rows.forEach(r => {
+    const info = classifyFund(r.fundName);
+    const key = level === 'amc' ? info.amc : level === 'category' ? info.category : info.region;
+    if(!groups[key]) groups[key] = { key, invested:0, currentValue:0, members:[] };
+    groups[key].invested += r.invested;
+    groups[key].currentValue += r.currentValue;
+    groups[key].members.push(r);
+  });
+  return Object.values(groups).sort((a,b) => b.currentValue - a.currentValue);
 }
 
 function destroyDashboardCharts(){
@@ -1453,10 +1578,51 @@ function renderFundVsAverageChart(canvasId, rows){
   }));
 }
 
+// ---------- Market index ticker (NIFTY 50 / Bank NIFTY / DOW / China) ----------
+// Public action, no login required — safe to call from the auth screen. Refreshed on a
+// single shared 60s interval that just no-ops for any container not currently in the DOM,
+// so it's cheap whether one or both of the auth screen / Dashboard are showing.
+let indexTickerInterval = null;
+async function loadIndexTicker(containerId){
+  if(!document.getElementById(containerId)) return;
+  try {
+    const res = await api('getMarketIndices', {});
+    renderIndexTicker(containerId, res.indices || []);
+  } catch(e){ /* ticker is a nice-to-have; fail silently rather than showing an error */ }
+  if(!indexTickerInterval){
+    indexTickerInterval = setInterval(async () => {
+      const targets = ['authIndexTicker','dashIndexTicker'].filter(id => document.getElementById(id));
+      if(!targets.length) return;
+      try {
+        const res = await api('getMarketIndices', {});
+        targets.forEach(id => renderIndexTicker(id, res.indices || []));
+      } catch(e){ /* skip this cycle */ }
+    }, 60000);
+  }
+}
+function renderIndexTicker(containerId, indices){
+  const box = document.getElementById(containerId);
+  if(!box) return;
+  if(!indices || !indices.length){ box.innerHTML = ''; return; }
+  box.innerHTML = indices.map(idx => {
+    if(!idx.ok) return `<div class="idx-chip"><div class="idx-label">${esc(idx.label)}</div><div class="idx-price">—</div></div>`;
+    const up = idx.change >= 0;
+    return `<div class="idx-chip">
+      <div class="idx-label">${esc(idx.label)}</div>
+      <div class="idx-price">${Number(idx.price).toLocaleString('en-IN',{maximumFractionDigits:2})}</div>
+      <div class="idx-change ${up?'up':'down'}">${up?'▲':'▼'} ${Math.abs(idx.changePct).toFixed(2)}%</div>
+    </div>`;
+  }).join('');
+}
+
 async function renderDashboard(){
   const c = document.getElementById('mfContent');
   destroyDashboardCharts();
-  let html = `<h2>My Portfolio Dashboard</h2><div class="mf-sub">Live performance using the latest AMFI NAV for every scheme you hold (SIPs + CAS holdings). Refreshes automatically.</div>`;
+  let html = `<div class="mf-dashboard-top">
+    <div><h2 style="margin-bottom:2px">My Portfolio Dashboard</h2><div class="mf-sub">Live performance using the latest AMFI NAV for every scheme you hold (SIPs + CAS holdings). Refreshes automatically.</div></div>
+    <div id="dashIndexTicker" class="mf-index-ticker on-paper"></div>
+  </div>`;
+  loadIndexTicker('dashIndexTicker');
 
   if(state.sips.length === 0 && state.holdings.length === 0){
     html += `<div class="mf-empty"><div class="big">—</div>No investments yet — add a SIP in the register, or ask your advisor to upload your CAS, to see performance here.</div>`;
@@ -1490,34 +1656,18 @@ async function renderDashboard(){
     <div class="chart-box"><h3>Your Average Return vs Each Fund</h3><canvas id="chartFundVsAvg"></canvas></div>
   </div>`;
 
-  html += `<div class="mf-card" style="overflow-x:auto"><table class="mf-table"><thead><tr>
-    <th>Fund</th><th>Source</th><th>Units</th><th>NAV</th><th>Invested</th><th>Current Value</th><th>Gain/Loss</th><th>Return</th><th>Weight</th>
-  </tr></thead><tbody>`;
-  rows.forEach((r,i) => {
-    const rc = r.gain >= 0 ? 'var(--teal)' : 'var(--maroon)';
-    const weight = totalValue>0 ? (r.currentValue/totalValue*100) : 0;
-    html += `<tr class="drill-row" data-drill="${i}">
-      <td>${esc(r.fundName)}${!r.navIsLive?'<div class="mf-sub" style="margin:0">using last-saved NAV</div>':''}${r.source==='SIP'?(r.computedFromHistory?(r.usedAsOf?`<div class="mf-sub" style="margin:0;color:var(--teal)">✓ opening value as of ${esc(r.asOfDate)} + ${r.newInstallments||0} auto-SIP installment(s) since</div>`:'<div class="mf-sub" style="margin:0;color:var(--teal)">✓ units from actual NAV history</div>'):'<div class="mf-sub" style="margin:0">using manually entered units (estimate)</div>'):''}</td>
-      <td><span class="pill other">${r.source}</span></td>
-      <td class="num">${Number(r.units||0).toFixed(3)}</td>
-      <td class="num">₹${r.nav.toFixed(2)}</td>
-      <td class="num">₹${Math.round(r.invested).toLocaleString('en-IN')}</td>
-      <td class="num">₹${Math.round(r.currentValue).toLocaleString('en-IN')}</td>
-      <td class="num" style="color:${rc}">${r.gain>=0?'+':''}₹${Math.round(r.gain).toLocaleString('en-IN')}</td>
-      <td class="num" style="color:${rc}">${r.gain>=0?'+':''}${r.gainPct.toFixed(2)}%</td>
-      <td class="num">${weight.toFixed(1)}%</td>
-    </tr>
-    <tr id="drillPanel-${i}" style="display:none"><td colspan="9"><div class="drill-panel">
-      <div class="mf-row" style="margin-bottom:10px">
-        <div style="flex:1;min-width:140px"><div class="mf-sub" style="margin:0">Weightage to portfolio</div><div class="num" style="font-size:16px">${weight.toFixed(1)}%</div></div>
-        <div style="flex:1;min-width:140px"><div class="mf-sub" style="margin:0">Performance</div><div class="num" style="font-size:16px;color:${rc}">${r.gain>=0?'+':''}${r.gainPct.toFixed(2)}%</div></div>
-        <div style="flex:1;min-width:140px"><div class="mf-sub" style="margin:0">Current Value</div><div class="num" style="font-size:16px">₹${Math.round(r.currentValue).toLocaleString('en-IN')}</div></div>
-      </div>
-      <canvas id="drillChart-${i}" style="max-height:160px"></canvas>
-    </div></td></tr>`;
-  });
-  html += `</tbody></table></div>
-  <div class="notice">Click any row above to drill down from bird's-eye portfolio view to that individual fund's graph, performance and weightage. "Invested" uses the exact figure you (or your advisor) entered where available, otherwise it's estimated. Projections are illustrative only, not a guarantee of future returns.</div>`;
+  lastDashboardRows = rows;
+  lastDashboardTotalValue = totalValue;
+
+  const GROUPBY_LABELS = { scheme:'Scheme', amc:'Mutual Fund (AMC)', category:'Category', region:'Domestic / International' };
+  html += `<div class="mf-card" style="margin-bottom:0;padding:12px 14px">
+    <div class="mf-sub" style="margin:0 0 8px">Drill down by</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${Object.keys(GROUPBY_LABELS).map(k => `<button class="mf-btn ${k===dashboardGroupBy?'gold':'ghost'} sm dash-groupby" data-groupby="${k}">${GROUPBY_LABELS[k]}</button>`).join('')}
+    </div>
+  </div>
+  <div id="dashTableWrap">${renderDashboardTable(rows, totalValue, dashboardGroupBy)}</div>
+  <div class="notice">Click any row to drill down — at Scheme level that's each fund's graph, performance and weightage; at Mutual Fund / Category / Domestic-International level it expands into the underlying schemes. Mutual Fund/Category/Region groupings are inferred from scheme names as a best-effort guide, not an official AMFI categorization. "Invested" uses the exact figure you (or your advisor) entered where available, otherwise it's estimated. Projections are illustrative only, not a guarantee of future returns.</div>`;
 
   c.innerHTML = html;
   renderAllocationChart('chartAlloc', rows);
@@ -1532,6 +1682,96 @@ async function renderDashboard(){
   }
   renderFundVsAverageChart('chartFundVsAvg', rows);
 
+  wireDashboardTable(rows, totalValue, dashboardGroupBy);
+
+  document.querySelectorAll('.dash-groupby').forEach(btn => {
+    btn.onclick = () => {
+      dashboardGroupBy = btn.dataset.groupby;
+      // Re-render just the table (no re-fetch of NAVs/SIP data) so switching drilldown level is instant.
+      document.querySelectorAll('.dash-groupby').forEach(b => { b.classList.toggle('gold', b.dataset.groupby===dashboardGroupBy); b.classList.toggle('ghost', b.dataset.groupby!==dashboardGroupBy); });
+      const wrap = document.getElementById('dashTableWrap');
+      if(wrap) wrap.innerHTML = renderDashboardTable(lastDashboardRows, lastDashboardTotalValue, dashboardGroupBy);
+      wireDashboardTable(lastDashboardRows, lastDashboardTotalValue, dashboardGroupBy);
+    };
+  });
+}
+
+// Renders the Dashboard's fund table at the given drilldown level: 'scheme' shows one row
+// per scheme (original behaviour); 'amc' / 'category' / 'region' aggregate into groups that
+// expand to reveal their member schemes.
+function renderDashboardTable(rows, totalValue, groupBy){
+  if(groupBy === 'scheme'){
+    let html = `<div class="mf-card" style="overflow-x:auto"><table class="mf-table"><thead><tr>
+      <th>Fund</th><th>Source</th><th>Units</th><th>NAV</th><th>Invested</th><th>Current Value</th><th>Gain/Loss</th><th>Return</th><th>Weight</th>
+    </tr></thead><tbody>`;
+    rows.forEach((r,i) => {
+      const rc = r.gain >= 0 ? 'var(--teal)' : 'var(--maroon)';
+      const weight = totalValue>0 ? (r.currentValue/totalValue*100) : 0;
+      html += `<tr class="drill-row" data-drill="s${i}">
+        <td>${esc(r.fundName)}${!r.navIsLive?'<div class="mf-sub" style="margin:0">using last-saved NAV</div>':''}${r.source==='SIP'?(r.computedFromHistory?(r.usedAsOf?`<div class="mf-sub" style="margin:0;color:var(--teal)">✓ opening value as of ${esc(r.asOfDate)} + ${r.newInstallments||0} auto-SIP installment(s) since</div>`:'<div class="mf-sub" style="margin:0;color:var(--teal)">✓ units from actual NAV history</div>'):'<div class="mf-sub" style="margin:0">using manually entered units (estimate)</div>'):''}</td>
+        <td><span class="pill other">${r.source}</span></td>
+        <td class="num">${Number(r.units||0).toFixed(3)}</td>
+        <td class="num">₹${r.nav.toFixed(2)}</td>
+        <td class="num">₹${Math.round(r.invested).toLocaleString('en-IN')}</td>
+        <td class="num">₹${Math.round(r.currentValue).toLocaleString('en-IN')}</td>
+        <td class="num" style="color:${rc}">${r.gain>=0?'+':''}₹${Math.round(r.gain).toLocaleString('en-IN')}</td>
+        <td class="num" style="color:${rc}">${r.gain>=0?'+':''}${r.gainPct.toFixed(2)}%</td>
+        <td class="num">${weight.toFixed(1)}%</td>
+      </tr>
+      <tr id="drillPanel-s${i}" style="display:none"><td colspan="9"><div class="drill-panel">
+        <div class="mf-row" style="margin-bottom:10px">
+          <div style="flex:1;min-width:140px"><div class="mf-sub" style="margin:0">Weightage to portfolio</div><div class="num" style="font-size:16px">${weight.toFixed(1)}%</div></div>
+          <div style="flex:1;min-width:140px"><div class="mf-sub" style="margin:0">Performance</div><div class="num" style="font-size:16px;color:${rc}">${r.gain>=0?'+':''}${r.gainPct.toFixed(2)}%</div></div>
+          <div style="flex:1;min-width:140px"><div class="mf-sub" style="margin:0">Current Value</div><div class="num" style="font-size:16px">₹${Math.round(r.currentValue).toLocaleString('en-IN')}</div></div>
+        </div>
+        <canvas id="drillChart-s${i}" style="max-height:160px"></canvas>
+      </div></td></tr>`;
+    });
+    html += `</tbody></table></div>`;
+    return html;
+  }
+
+  const groups = groupDashboardRows(rows, groupBy);
+  const headLabel = groupBy==='amc' ? 'Mutual Fund (AMC)' : groupBy==='category' ? 'Category' : 'Domestic / International';
+  let html = `<div class="mf-card" style="overflow-x:auto"><table class="mf-table"><thead><tr>
+    <th>${headLabel}</th><th>Schemes</th><th>Invested</th><th>Current Value</th><th>Gain/Loss</th><th>Return</th><th>Weight</th>
+  </tr></thead><tbody>`;
+  groups.forEach((g,i) => {
+    const gain = g.currentValue - g.invested;
+    const gainPct = g.invested>0 ? (gain/g.invested*100) : 0;
+    const rc = gain>=0 ? 'var(--teal)' : 'var(--maroon)';
+    const weight = totalValue>0 ? (g.currentValue/totalValue*100) : 0;
+    html += `<tr class="drill-row" data-drill="g${i}">
+      <td>${esc(g.key)}</td>
+      <td class="num">${g.members.length}</td>
+      <td class="num">₹${Math.round(g.invested).toLocaleString('en-IN')}</td>
+      <td class="num">₹${Math.round(g.currentValue).toLocaleString('en-IN')}</td>
+      <td class="num" style="color:${rc}">${gain>=0?'+':''}₹${Math.round(gain).toLocaleString('en-IN')}</td>
+      <td class="num" style="color:${rc}">${gain>=0?'+':''}${gainPct.toFixed(2)}%</td>
+      <td class="num">${weight.toFixed(1)}%</td>
+    </tr>
+    <tr id="drillPanel-g${i}" style="display:none"><td colspan="7"><div class="drill-panel">
+      <div class="mf-row" style="margin-bottom:10px">
+        <div style="flex:1;min-width:140px"><div class="mf-sub" style="margin:0">Weightage to portfolio</div><div class="num" style="font-size:16px">${weight.toFixed(1)}%</div></div>
+        <div style="flex:1;min-width:140px"><div class="mf-sub" style="margin:0">Performance</div><div class="num" style="font-size:16px;color:${rc}">${gain>=0?'+':''}${gainPct.toFixed(2)}%</div></div>
+        <div style="flex:1;min-width:140px"><div class="mf-sub" style="margin:0">Current Value</div><div class="num" style="font-size:16px">₹${Math.round(g.currentValue).toLocaleString('en-IN')}</div></div>
+      </div>
+      <canvas id="drillChart-g${i}" style="max-height:160px;margin-bottom:10px"></canvas>
+      <table class="mf-table"><thead><tr><th>Scheme</th><th>Invested</th><th>Current Value</th><th>Gain/Loss</th><th>Return</th></tr></thead><tbody>
+      ${g.members.map(m => {
+        const mrc = m.gain>=0?'var(--teal)':'var(--maroon)';
+        return `<tr><td>${esc(m.fundName)}</td><td class="num">₹${Math.round(m.invested).toLocaleString('en-IN')}</td><td class="num">₹${Math.round(m.currentValue).toLocaleString('en-IN')}</td><td class="num" style="color:${mrc}">${m.gain>=0?'+':''}₹${Math.round(m.gain).toLocaleString('en-IN')}</td><td class="num" style="color:${mrc}">${m.gain>=0?'+':''}${m.gainPct.toFixed(2)}%</td></tr>`;
+      }).join('')}
+      </tbody></table>
+    </div></td></tr>`;
+  });
+  html += `</tbody></table></div>`;
+  return html;
+}
+
+// Attaches click-to-expand handlers for whichever drilldown level is currently rendered.
+function wireDashboardTable(rows, totalValue, groupBy){
+  const groups = groupBy === 'scheme' ? null : groupDashboardRows(rows, groupBy);
   document.querySelectorAll('[data-drill]').forEach(tr => {
     tr.onclick = () => {
       const idx = tr.dataset.drill;
@@ -1540,11 +1780,14 @@ async function renderDashboard(){
       document.querySelectorAll('[id^=drillPanel-]').forEach(p=>p.style.display='none');
       if(!isOpen){
         panel.style.display = 'table-row';
-        const r = rows[idx];
         const ctx = document.getElementById('drillChart-'+idx);
         if(ctx && window.Chart){
-          new Chart(ctx, { type:'bar', data:{ labels:['Invested','Current Value'], datasets:[{ data:[r.invested, r.currentValue], backgroundColor:['#1B3A54','#A97F1F'] }] },
+          const n = Number(idx.slice(1));
+          const invested = groupBy==='scheme' ? rows[n].invested : groups[n].invested;
+          const currentValue = groupBy==='scheme' ? rows[n].currentValue : groups[n].currentValue;
+          const chart = new Chart(ctx, { type:'bar', data:{ labels:['Invested','Current Value'], datasets:[{ data:[invested, currentValue], backgroundColor:['#1B3A54','#A97F1F'] }] },
             options:{ plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true, ticks:{font:{size:10}}}, x:{ticks:{font:{size:10}}}} } });
+          dashboardChartInstances.push(chart);
         }
       }
     };
@@ -1722,6 +1965,11 @@ async function renderInvest(){
     </div>
     <button class="mf-btn gold" id="myBtnUploadCas">Update my portfolio</button>
     <div id="myCasStatus" style="margin-top:8px"></div>
+    <div style="border-top:1px solid var(--line);margin-top:16px;padding-top:12px">
+      <div class="mf-sub" style="margin:0 0 6px">Starting fresh instead? Clear everything below and upload a brand-new CAS.</div>
+      <button class="mf-btn ghost sm" id="myBtnFlushHoldings" style="border-color:var(--maroon);color:var(--maroon)">Flush all my holdings data</button>
+      <div id="myFlushStatus" style="margin-top:8px"></div>
+    </div>
   </div>`;
 
   c.innerHTML = html;
@@ -1748,6 +1996,20 @@ async function renderInvest(){
       await load();
     } catch(e){ statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message||'')}</div>`; }
     myBtnUploadCas.disabled = false;
+  };
+
+  const myBtnFlush = document.getElementById('myBtnFlushHoldings');
+  if(myBtnFlush) myBtnFlush.onclick = async () => {
+    const statusBox = document.getElementById('myFlushStatus');
+    if(!confirm('This permanently deletes every holding currently on your Dashboard (CAS-uploaded schemes only — your SIPs are untouched). This cannot be undone. Continue?')) return;
+    myBtnFlush.disabled = true;
+    try {
+      await api('flushHoldings', { email: currentUser.email, token: currentUser.token });
+      statusBox.innerHTML = `<div class="notice" style="margin:0">Cleared. Upload a fresh CAS above whenever you're ready.</div>`;
+      toast('Holdings cleared');
+      state.holdings = [];
+    } catch(e){ statusBox.innerHTML = `<div class="notice warn" style="margin:0"><strong>Failed:</strong> ${esc(e.message||'')}</div>`; }
+    myBtnFlush.disabled = false;
   };
 
   document.getElementById('btnSubmitRequest').onclick = async () => {
@@ -2131,6 +2393,10 @@ async function enterApp(){
     await enterApp();
   } catch(e){ sessionStorage.removeItem('fc_session'); }
 })();
+
+// The ticker is a public, unauthenticated call — load it immediately regardless of whether
+// resumeSession() above ends up signing the visitor straight into the app.
+loadIndexTicker('authIndexTicker');
 
 })();
 </script>

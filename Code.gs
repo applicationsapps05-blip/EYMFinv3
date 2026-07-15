@@ -26,13 +26,22 @@
  * browser never stores or resends the password itself. A session stays valid until the
  * user logs out or an admin blocks that account. Failed logins on an account lock it out
  * for 15 minutes after 5 attempts.
+ *
+ * v13 note: the slowness reported in this version was NOT coming from the password hashing
+ * or session checks (those run once at login, or a cheap in-memory lookup on every other
+ * call) — it was coming from (a) the Dashboard making one network round-trip per SIP instead
+ * of one batched call, and (b) a stale AMFI fund list occasionally forcing a live page load
+ * to wait 10-20s for a full re-fetch. Both are fixed below (computeSipAccumulationBatch,
+ * fundsNeedRefresh/setupDailyFundRefreshTrigger) with the auth/session/hashing model left
+ * exactly as-is, since weakening it wouldn't have fixed the speed problem and would put
+ * every investor's login and CAS/PAN data at needless risk.
  */
 
 // Bump this whenever you paste in new code. The Admin Console shows this live so you can
 // always confirm the deployed Web App is actually running what you just pasted — "Unknown
 // action" errors almost always mean you edited Code.gs but didn't create a NEW deployment
 // version (Deploy > Manage deployments > pencil icon > Version: New version > Deploy).
-const SCRIPT_VERSION = 'v12.0-2026-07-13-no-expiry';
+const SCRIPT_VERSION = 'v13.0-2026-07-15-perf-indices-drilldown-flush';
 
 function doPost(e) {
   let result;
@@ -51,16 +60,21 @@ function doPost(e) {
     else if (action === 'refreshFunds') result = requireAdminAction(body, refreshFundList);
     else if (action === 'lookupNavs') result = lookupNavs(body.names || []);
     else if (action === 'computeSipAccumulation') result = computeSipAccumulation(body);
+    else if (action === 'computeSipAccumulationBatch') result = computeSipAccumulationBatch(body);
     else if (action === 'getNews') result = getNews();
+    else if (action === 'getMarketIndices') result = getMarketIndices();
     else if (action === 'setupReminderTrigger') result = requireAdminAction(body, setupDailyReminderTrigger);
+    else if (action === 'setupFundRefreshTrigger') result = requireAdminAction(body, setupDailyFundRefreshTrigger);
     else if (action === 'getMessages') result = getMessages(body.email, body.token);
     else if (action === 'submitPurchaseRequest') result = submitPurchaseRequest(body);
     else if (action === 'uploadCas') result = uploadOwnCas(body);
+    else if (action === 'flushHoldings') result = flushHoldings(body);
     // ---- super-user / admin actions ----
     else if (action === 'adminAddSip') result = adminAddSip(body);
     else if (action === 'adminUpdateSip') result = adminUpdateSip(body);
     else if (action === 'adminDeleteSip') result = adminDeleteSip(body);
     else if (action === 'adminUploadCas') result = adminUploadCas(body);
+    else if (action === 'adminFlushHoldings') result = adminFlushHoldings(body);
     else if (action === 'adminChangePassword') result = adminChangePassword(body);
     else if (action === 'adminSetBlocked') result = adminSetBlocked(body);
     else if (action === 'adminBroadcast') result = adminBroadcast(body);
@@ -173,7 +187,40 @@ function advanceDate_(d, frequency) {
  *     portfolio keeps updating itself automatically as each new SIP date passes, without
  *     needing to re-derive the entire historical purchase trail.
  */
+// Public single-SIP entry point — kept for backward compatibility with any existing callers.
+// Internally just delegates to the shared core so there's one implementation to maintain.
 function computeSipAccumulation(body) {
+  return computeSipAccumulationCore_(body);
+}
+
+/**
+ * Batched sibling of computeSipAccumulation: takes body.sips = [{ id, schemeCode, startDate,
+ * frequency, amount, asOfDate, asOfInvested, asOfMarketValue }, ...] and returns results for
+ * ALL of them in a single request/response cycle.
+ *
+ * PERF NOTE: this exists because the old Dashboard code called computeSipAccumulation once
+ * PER SIP — an investor with 6 SIPs paid for 6 separate network round-trips to this Web App
+ * just to open their own Dashboard, each with its own HTTP overhead on top of the actual
+ * work. That's a real, measurable slowdown, and it has nothing to do with login/password
+ * security — it's simply how many times the browser has to talk to Apps Script. Batching
+ * into one call removes that overhead entirely (the per-scheme historical-NAV lookups are
+ * still individually cached exactly as before).
+ */
+function computeSipAccumulationBatch(body) {
+  const sips = body.sips || [];
+  const results = {};
+  sips.forEach(s => {
+    const key = s.id || (s.schemeCode + '_' + s.startDate);
+    try {
+      results[key] = computeSipAccumulationCore_(s);
+    } catch (e) {
+      results[key] = { ok: false, error: e.message };
+    }
+  });
+  return { ok: true, results: results };
+}
+
+function computeSipAccumulationCore_(body) {
   const schemeCode = body.schemeCode;
   const startDate = body.startDate;
   const frequency = body.frequency;
@@ -256,7 +303,22 @@ function parseMfapiDate_(str) {
   return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
 }
 
+// IMPORTANT (perf): this used to also return true once the list was >24h old, which meant
+// an ordinary investor opening the Dashboard could randomly be the one who pays for a
+// synchronous 10-20 second AMFI fetch-and-rewrite of ~10,000+ scheme rows. That had nothing
+// to do with login/password security — it was just a slow network call sitting in the
+// request path. Now a live request only forces a synchronous refresh if the Funds tab has
+// never been populated at all; a merely-stale list is still served instantly (a search/NAV
+// lookup a day old is a fine tradeoff for a page that opens instantly). Use
+// setupDailyFundRefreshTrigger() (Admin Console > "Enable automatic daily refresh") so the
+// list refreshes itself in the background at a fixed time and effectively never goes stale
+// in the first place.
 function fundsNeedRefresh() {
+  const sheet = getFundsSheet();
+  return sheet.getLastRow() < 2;
+}
+
+function fundsAreStale_() {
   const sheet = getFundsSheet();
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return true;
@@ -264,6 +326,23 @@ function fundsNeedRefresh() {
   if (!lastRefreshed) return true;
   const ageHours = (Date.now() - new Date(lastRefreshed).getTime()) / 36e5;
   return ageHours > 24;
+}
+
+/**
+ * Run once (Admin Console > AMFI Fund List > "Enable automatic daily refresh", or from the
+ * Apps Script editor function dropdown) to refresh the Funds tab automatically every night —
+ * so no live investor request ever has to pay for the AMFI fetch itself. Safe to re-run.
+ */
+function setupDailyFundRefreshTrigger() {
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === 'refreshFundListIfStale_') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('refreshFundListIfStale_').timeBased().everyDays(1).atHour(3).create();
+  return { ok: true, message: 'Fund list will now refresh automatically in the background (~3 AM daily).' };
+}
+
+function refreshFundListIfStale_() {
+  if (fundsAreStale_()) refreshFundList();
 }
 
 function searchFunds(query) {
@@ -739,6 +818,34 @@ function adminUploadCas(body) {
   return { ok: true, count: incoming.length };
 }
 
+/**
+ * Self-service: an investor wipes their OWN CAS holdings clean (units/folios/values from
+ * old statements), so a fresh CAS PDF can be uploaded without old and new rows mixing
+ * together. Does NOT touch SIPs, risk profile, or personal details — holdings only.
+ */
+function flushHoldings(body) {
+  if (!authOk(body.email, body.token)) return { ok: false, error: 'Not authenticated' };
+  const sheet = getClientsSheet();
+  const existing = clientRowFor(sheet, body.email);
+  if (!existing) return { ok: false, error: 'Account not found' };
+  sheet.getRange(existing.row, 10).setValue('[]');
+  sheet.getRange(existing.row, 9).setValue(new Date());
+  return { ok: true };
+}
+
+/** Super-user: wipe any investor's CAS holdings clean (e.g. before uploading a corrected
+ * CAS on their behalf). Does NOT touch SIPs, risk profile, or personal details. */
+function adminFlushHoldings(body) {
+  const admin = requireAdmin(body.adminEmail, body.adminToken);
+  if (!admin.ok) return admin;
+  const sheet = getClientsSheet();
+  const existing = clientRowFor(sheet, body.targetEmail);
+  if (!existing) return { ok: false, error: 'No such investor account' };
+  sheet.getRange(existing.row, 10).setValue('[]');
+  sheet.getRange(existing.row, 9).setValue(new Date());
+  return { ok: true };
+}
+
 /** Super-user: change any investor's password. */
 function adminChangePassword(body) {
   const admin = requireAdmin(body.adminEmail, body.adminToken);
@@ -888,6 +995,46 @@ const DOMESTIC_FEEDS = [
 const INTL_FEEDS = [
   { source: 'Economic Times World', url: 'https://economictimes.indiatimes.com/news/international/rssfeeds/858478126.cms' }
 ];
+
+// =====================================================================================
+// Market index ticker — NIFTY 50, Bank NIFTY, Dow Jones, and a China index for the top-right
+// of the home/login screen and the Dashboard. Uses Yahoo Finance's public, keyless chart
+// endpoint (the same kind of free, no-signup source already used elsewhere here for AMFI/
+// mfapi.in data). Cached 5 minutes so the ticker never adds real latency to a page open —
+// worst case it's a few minutes behind, which is fine for a glance indicator.
+// =====================================================================================
+const MARKET_INDEX_SYMBOLS = [
+  { key: 'NIFTY50', label: 'NIFTY 50', symbol: '%5ENSEI' },
+  { key: 'BANKNIFTY', label: 'BANK NIFTY', symbol: '%5ENSEBANK' },
+  { key: 'DOW', label: 'DOW', symbol: '%5EDJI' },
+  { key: 'CHINA', label: 'CHINA (SSE)', symbol: '000001.SS' }
+];
+
+function getMarketIndices() {
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get('fc_indices');
+  if (cached) return { ok: true, indices: JSON.parse(cached), cached: true };
+
+  const indices = MARKET_INDEX_SYMBOLS.map(def => {
+    try {
+      const url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + def.symbol + '?range=1d&interval=1d';
+      const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+      if (res.getResponseCode() !== 200) return { key: def.key, label: def.label, ok: false };
+      const json = JSON.parse(res.getContentText());
+      const meta = json.chart && json.chart.result && json.chart.result[0] && json.chart.result[0].meta;
+      if (!meta || meta.regularMarketPrice === undefined) return { key: def.key, label: def.label, ok: false };
+      const price = meta.regularMarketPrice;
+      const prevClose = meta.previousClose || meta.chartPreviousClose || price;
+      const change = price - prevClose;
+      const changePct = prevClose ? (change / prevClose * 100) : 0;
+      return { key: def.key, label: def.label, ok: true, price: price, change: change, changePct: changePct, currency: meta.currency || '' };
+    } catch (e) {
+      return { key: def.key, label: def.label, ok: false };
+    }
+  });
+  cache.put('fc_indices', JSON.stringify(indices), 300);
+  return { ok: true, indices: indices, cached: false };
+}
 
 function getNews() {
   const cache = CacheService.getScriptCache();

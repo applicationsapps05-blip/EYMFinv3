@@ -1,5 +1,28 @@
 # Folio & Compass — Google Sheets Backend Setup
 
+## What changed in this version (v13)
+- **Speed:** the Dashboard used to make one backend call *per SIP* just to open — an
+  investor with 6 SIPs paid for 6 network round-trips. It's now one batched call
+  (`computeSipAccumulationBatch`). Separately, the AMFI fund list used to occasionally force
+  a live page load to wait 10-20s for a full re-fetch when it went stale; a live request now
+  always serves whatever's cached instantly, and you can enable a background daily refresh
+  (Admin Console → AMFI Fund List → "Enable automatic daily refresh") so it never goes stale
+  in the first place.
+- **Security is unchanged on purpose.** Salted PBKDF2 password hashing, session tokens, and
+  the login lockout weren't the source of the slowness — they're cheap (a hash only runs once
+  at login; every other check is a fast lookup) — so removing them wouldn't have fixed speed
+  and would put every investor's password and CAS/PAN data at real risk. See the note at the
+  top of `Code.gs` for specifics.
+- **New:** a small NIFTY 50 / Bank NIFTY / DOW / China index ticker on the login screen and
+  Dashboard (`getMarketIndices`, cached 5 min, no login required to view).
+- **New:** Dashboard "Drill down by" — Scheme (as before), Mutual Fund (AMC), Category, or
+  Domestic/International, each expandable back down to individual schemes. Groupings are
+  inferred from scheme names as a best-effort guide, not an official categorization.
+- **New:** a "Flush all holdings" button (investor's own Invest tab, and Admin Console per
+  investor) that clears CAS-uploaded holdings only — SIPs, risk profile and personal details
+  are untouched — so a fresh CAS can be uploaded onto a clean slate. Both require a confirm
+  dialog and cannot be undone.
+
 This version stores every client's data as rows in a Google Sheet you own —
 completely free, no card needed, and you can open the Sheet any time to see
 the raw data. Takes about 10 minutes.
