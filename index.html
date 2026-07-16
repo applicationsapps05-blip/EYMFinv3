@@ -85,18 +85,37 @@
   background: rgba(241,236,221,0.08);
   border: 1px solid rgba(241,236,221,0.18);
   border-radius: 6px;
-  padding: 5px 10px;
-  min-width: 84px;
+  padding: 15px 30px;
+  min-width: 252px;
   text-align: right;
 }
 .mf-index-ticker.on-paper .idx-chip { background: rgba(28,43,57,0.04); border-color: var(--line); }
-.mf-index-ticker .idx-chip .idx-label { font-size: 9.5px; letter-spacing: 0.5px; text-transform: uppercase; opacity: 0.7; }
-.mf-index-ticker .idx-chip .idx-price { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; font-weight: 600; margin-top: 1px; }
-.mf-index-ticker .idx-chip .idx-change { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; margin-top: 1px; }
+.mf-index-ticker .idx-chip .idx-label { font-size: 28.5px; letter-spacing: 0.5px; text-transform: uppercase; opacity: 0.7; }
+.mf-index-ticker .idx-chip .idx-price { font-family: 'IBM Plex Mono', monospace; font-size: 37.5px; font-weight: 600; margin-top: 1px; }
+.mf-index-ticker .idx-chip .idx-change { font-family: 'IBM Plex Mono', monospace; font-size: 31.5px; margin-top: 1px; }
 .mf-index-ticker .idx-chip .idx-change.up { color: #6FBF9A; }
 .mf-index-ticker .idx-chip .idx-change.down { color: #E08A8A; }
 .mf-index-ticker.on-paper .idx-chip .idx-change.up { color: var(--teal); }
 .mf-index-ticker.on-paper .idx-chip .idx-change.down { color: var(--maroon); }
+.mf-login-flash {
+  width: 100%; max-width: 640px; box-sizing: border-box; margin: 0 0 10px; padding: 10px 16px;
+  border-radius: 8px; background: rgba(169,127,31,0.12); border: 1px solid rgba(169,127,31,0.35);
+  color: #10263A; font-size: 12.5px; text-align: center; display: flex; flex-direction: column; gap: 4px;
+}
+.mf-login-flash .lf-msg { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.mf-login-flash .lf-msg .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--gold); flex-shrink: 0; }
+.mf-market-summary {
+  width: 100%; max-width: 260px; box-sizing: border-box; background: #fff; border: 1px solid var(--line);
+  border-radius: 10px; padding: 16px 18px;
+}
+.mf-market-summary .ms-title { font-size: 11px; letter-spacing: 0.5px; text-transform: uppercase; color: rgba(28,43,57,0.55); margin-bottom: 2px; }
+.mf-market-summary .ms-date { font-size: 13.5px; font-weight: 600; color: #10263A; margin-bottom: 12px; }
+.mf-market-summary .ms-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; margin-bottom: 7px; }
+.mf-market-summary .ms-row .ms-val { font-family: 'IBM Plex Mono', monospace; font-weight: 600; }
+.mf-market-summary .ms-row .ms-val.up { color: var(--teal); }
+.mf-market-summary .ms-row .ms-val.down { color: var(--maroon); }
+.mf-market-summary .ms-mood { font-size: 12px; color: rgba(28,43,57,0.65); margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.mf-market-summary .ms-note { font-size: 12px; color: rgba(28,43,57,0.75); margin-top: 8px; font-style: italic; }
 .mf-dashboard-top { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px; }
 
 .mf-body { display: flex; flex: 1; min-height: 0; }
@@ -309,22 +328,27 @@ table.mf-table tr:hover td { background: rgba(169,127,31,0.06); }
 }
 </style>
 
-<div id="mfAuthScreen" class="mfapp" style="display:flex;align-items:center;justify-content:center;min-height:640px;position:relative">
-  <div id="authIndexTicker" class="mf-index-ticker on-paper" style="position:absolute;top:16px;right:16px;max-width:260px"></div>
-  <div style="max-width:340px;width:100%;padding:30px">
-    <div style="text-align:center;margin-bottom:22px">
-      <div style="font-family:'Fraunces',serif;font-size:20px;color:#10263A;font-weight:600;line-height:1.3">Engineering Your Financial Freedom</div>
-      <div style="font-size:11px;color:#A97F1F;letter-spacing:1px;text-transform:uppercase;margin-top:4px">EYM Financial · ARN-364244</div>
+<div id="mfAuthScreen" class="mfapp" style="display:flex;flex-direction:column;align-items:center;justify-content:flex-start;min-height:640px;position:relative;padding:18px 16px 24px">
+  <div id="authTopFlash" class="mf-login-flash" style="display:none"></div>
+  <div id="authIndexTicker" class="mf-index-ticker on-paper" style="justify-content:center;margin:6px 0 10px"></div>
+  <div style="flex:1;display:flex;align-items:center;justify-content:center;width:100%;gap:28px;flex-wrap:wrap">
+    <div id="authMarketSummary" class="mf-market-summary" style="display:none"></div>
+    <div style="max-width:340px;width:100%;padding:30px">
+      <div style="text-align:center;margin-bottom:22px">
+        <div style="font-family:'Fraunces',serif;font-size:20px;color:#10263A;font-weight:600;line-height:1.3">Engineering Your Financial Freedom</div>
+        <div style="font-size:11px;color:#A97F1F;letter-spacing:1px;text-transform:uppercase;margin-top:4px">EYM Financial · ARN-364244</div>
+      </div>
+      <div class="mf-card">
+        <div id="authError" class="notice warn" style="display:none"></div>
+        <div class="mf-field"><label>Email</label><input id="authEmail" type="email" placeholder="you@example.com"></div>
+        <div class="mf-field"><label>Password</label><input id="authPassword" type="password" placeholder="••••••••"></div>
+        <button class="mf-btn gold" id="btnSignIn" style="width:100%;margin-bottom:8px">Sign In</button>
+        <button class="mf-btn ghost" id="btnSignUp" style="width:100%">Create Account</button>
+      </div>
+      <div style="text-align:center;font-size:11px;color:rgba(28,43,57,0.5);margin-top:10px">Contact us: 7292078936</div>
     </div>
-    <div class="mf-card">
-      <div id="authError" class="notice warn" style="display:none"></div>
-      <div class="mf-field"><label>Email</label><input id="authEmail" type="email" placeholder="you@example.com"></div>
-      <div class="mf-field"><label>Password</label><input id="authPassword" type="password" placeholder="••••••••"></div>
-      <button class="mf-btn gold" id="btnSignIn" style="width:100%;margin-bottom:8px">Sign In</button>
-      <button class="mf-btn ghost" id="btnSignUp" style="width:100%">Create Account</button>
-    </div>
-    <div style="text-align:center;font-size:11px;color:rgba(28,43,57,0.5);margin-top:10px">Contact us: 7292078936</div>
   </div>
+  <div id="authBottomFlash" class="mf-login-flash" style="display:none"></div>
 </div>
 
 <div class="mfapp" id="mfapp" style="display:none">
@@ -452,26 +476,37 @@ let lastDashboardTotalValue = 0;
 
 async function load(){
   if(!currentUser) return;
-  try {
-    const res = await api('loadData', { email: currentUser.email, token: currentUser.token });
-    if(res.data){
-      state.investor = { ...DEFAULT_INVESTOR, ...res.data.investor, email: currentUser.email };
-      state.riskAssessment = res.data.riskAssessment || null;
-      state.sips = res.data.sips || [];
-      state.holdings = res.data.holdings || [];
-    } else {
-      state.investor = { ...DEFAULT_INVESTOR, email: currentUser.email };
-    }
-  } catch(e){ toast('Could not load your data — check your Apps Script URL / deployment'); }
-  await loadBanner();
+  // loadData and getMessages are independent — they used to run one after another (two
+  // sequential Apps Script round-trips back to back right after signing in, which is where
+  // most of the "slow after entering password" feeling comes from, since each Apps Script
+  // call typically costs several hundred ms to a couple of seconds on Google's infrastructure).
+  // Running them in parallel with Promise.all cuts that wait roughly in half without touching
+  // password hashing/session security at all.
+  const [dataRes] = await Promise.all([
+    api('loadData', { email: currentUser.email, token: currentUser.token })
+      .catch(e => { toast('Could not load your data — check your Apps Script URL / deployment'); return null; }),
+    loadMessages()
+  ]);
+  if(dataRes && dataRes.data){
+    state.investor = { ...DEFAULT_INVESTOR, ...dataRes.data.investor, email: currentUser.email };
+    state.riskAssessment = dataRes.data.riskAssessment || null;
+    state.sips = dataRes.data.sips || [];
+    state.holdings = dataRes.data.holdings || [];
+  } else if(dataRes){
+    state.investor = { ...DEFAULT_INVESTOR, email: currentUser.email };
+  }
+  renderBanner();
   render();
 }
-async function loadBanner(){
+async function loadMessages(){
   if(!currentUser) return;
   try {
     const res = await api('getMessages', { email: currentUser.email, token: currentUser.token });
     state.messages = res.messages || [];
   } catch(e){ /* non-critical */ }
+}
+async function loadBanner(){
+  await loadMessages();
   renderBanner();
 }
 function renderBanner(){
@@ -775,9 +810,16 @@ async function renderAdvisor(){
     <h2 style="font-size:14px;margin:0 0 10px">7 &middot; Post a banner message</h2>
     <div class="mf-row">
       <div class="mf-field" style="min-width:220px"><label>Send to</label>
-        <select id="broadcast-target"><option value="ALL">All investors</option>${clients.map(cl=>`<option value="${esc(cl.email)}">${esc(cl.name||cl.email)}</option>`).join('')}</select></div>
+        <select id="broadcast-target">
+          <option value="ALL">All investors (in-app banner)</option>
+          ${clients.map(cl=>`<option value="${esc(cl.email)}">${esc(cl.name||cl.email)} (in-app banner)</option>`).join('')}
+          <option value="LOGIN_TOP">Login page — top flash</option>
+          <option value="LOGIN_BOTTOM">Login page — bottom flash</option>
+          <option value="LOGIN_MARKET_NOTE">Login page — market summary note</option>
+        </select></div>
     </div>
     <div class="mf-field"><label>Message</label><input id="broadcast-message" placeholder="e.g. Markets closed on 15th Aug for a national holiday"></div>
+    <div class="mf-sub" style="margin:0 0 8px">"In-app banner" options only show to signed-in investors on their Dashboard. "Login page" flashes show to anyone visiting the sign-in screen, before they log in — don't put anything investor-specific there.</div>
     <button class="mf-btn gold" id="btnPostBroadcast">Post message</button>
     <div id="broadcastStatus" style="margin-top:8px"></div>
     <div id="broadcastList" style="margin-top:12px"></div>
@@ -1374,7 +1416,7 @@ async function loadBroadcastList(){
     if(msgs.length === 0){ box.innerHTML = `<div class="mf-sub">No active messages.</div>`; return; }
     box.innerHTML = `<div class="mf-sub" style="margin-bottom:6px">Active messages</div>` + msgs.map(m => `
       <div class="remind-item">
-        <div><strong style="font-size:12.5px">${m.target==='ALL'?'Everyone':esc(m.target)}</strong><div class="mf-sub" style="margin:2px 0 0">${esc(m.message)}</div></div>
+        <div><strong style="font-size:12.5px">${m.target==='ALL'?'Everyone (in-app)':m.target==='LOGIN_TOP'?'Login page — top flash':m.target==='LOGIN_BOTTOM'?'Login page — bottom flash':m.target==='LOGIN_MARKET_NOTE'?'Login page — market summary note':esc(m.target)+' (in-app)'}</strong><div class="mf-sub" style="margin:2px 0 0">${esc(m.message)}</div></div>
         <button class="mf-btn ghost sm" data-msgdel="${m.id}">Remove</button>
       </div>`).join('');
     box.querySelectorAll('[data-msgdel]').forEach(b => b.onclick = async () => {
@@ -1704,12 +1746,16 @@ function renderFundVsAverageChart(canvasId, rows){
 // single shared 60s interval that just no-ops for any container not currently in the DOM,
 // so it's cheap whether one or both of the auth screen / Dashboard are showing.
 let indexTickerInterval = null;
+let lastAuthIndices = null;
+let lastMarketNote = '';
 async function loadIndexTicker(containerId){
   if(!document.getElementById(containerId)) return;
   try {
     const res = await api('getMarketIndices', {});
     renderIndexTicker(containerId, res.indices || []);
+    if(containerId === 'authIndexTicker'){ lastAuthIndices = res.indices || []; renderMarketSummary(); }
   } catch(e){ /* ticker is a nice-to-have; fail silently rather than showing an error */ }
+  if(containerId === 'authIndexTicker') loadLoginFlashMessages();
   if(!indexTickerInterval){
     indexTickerInterval = setInterval(async () => {
       const targets = ['authIndexTicker','dashIndexTicker'].filter(id => document.getElementById(id));
@@ -1717,9 +1763,65 @@ async function loadIndexTicker(containerId){
       try {
         const res = await api('getMarketIndices', {});
         targets.forEach(id => renderIndexTicker(id, res.indices || []));
+        if(targets.includes('authIndexTicker')){ lastAuthIndices = res.indices || []; renderMarketSummary(); }
       } catch(e){ /* skip this cycle */ }
+      if(document.getElementById('authIndexTicker')) loadLoginFlashMessages();
     }, 60000);
   }
+}
+
+// Left-panel "today's Indian market" summary on the sign-in screen. Numbers are derived
+// automatically from the same NIFTY 50 / Bank NIFTY data already fetched for the ticker (no
+// extra network call) — an admin can optionally add one short freeform line on top of that
+// via Admin Console > Post a banner message > "Login page — market summary note".
+function renderMarketSummary(){
+  const box = document.getElementById('authMarketSummary');
+  if(!box) return;
+  if(!lastAuthIndices || !lastAuthIndices.length){ box.style.display = 'none'; return; }
+  const byKey = {}; lastAuthIndices.forEach(i => byKey[i.key] = i);
+  const nifty = byKey['NIFTY50'], bank = byKey['BANKNIFTY'];
+  if(!nifty || !nifty.ok){ box.style.display = 'none'; return; }
+  const row = (idx) => {
+    if(!idx || !idx.ok) return '';
+    const up = idx.change >= 0;
+    return `<div class="ms-row"><span>${esc(idx.label)}</span><span class="ms-val ${up?'up':'down'}">${Number(idx.price).toLocaleString('en-IN',{maximumFractionDigits:2})} ${up?'▲':'▼'} ${Math.abs(idx.changePct).toFixed(2)}%</span></div>`;
+  };
+  const niftyUp = nifty.change >= 0;
+  const bankUp = bank && bank.ok ? bank.change >= 0 : null;
+  let mood;
+  if(bankUp === null) mood = niftyUp ? 'Nifty ended the session higher.' : 'Nifty ended the session lower.';
+  else if(niftyUp && bankUp) mood = 'Broad-based buying — both Nifty and Bank Nifty closed higher.';
+  else if(!niftyUp && !bankUp) mood = 'A weak session — both Nifty and Bank Nifty closed lower.';
+  else mood = `Mixed session — ${niftyUp?'Nifty gained while banking stocks lagged':'Nifty slipped even as banking stocks held up'}.`;
+  box.innerHTML = `
+    <div class="ms-title">Today's Indian market</div>
+    <div class="ms-date">${new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</div>
+    ${row(nifty)}${row(bank)}
+    <div class="ms-mood">${esc(mood)}</div>
+    ${lastMarketNote ? `<div class="ms-note">${esc(lastMarketNote)}</div>` : ''}
+  `;
+  box.style.display = 'block';
+}
+
+// Public, no-auth flash banners shown on the sign-in screen — one slot pinned near the top,
+// one near the bottom-center, each posted by an admin from Admin Console > Post a banner
+// message ("Login page — top/bottom flash"). Independent of the in-app investor banner.
+async function loadLoginFlashMessages(){
+  const topBox = document.getElementById('authTopFlash'), bottomBox = document.getElementById('authBottomFlash');
+  if(!topBox && !bottomBox && !document.getElementById('authMarketSummary')) return;
+  try {
+    const res = await api('getLoginMessages', {});
+    renderLoginFlash(topBox, res.top || []);
+    renderLoginFlash(bottomBox, res.bottom || []);
+    lastMarketNote = res.note || '';
+    renderMarketSummary();
+  } catch(e){ /* non-critical */ }
+}
+function renderLoginFlash(box, msgs){
+  if(!box) return;
+  if(!msgs || !msgs.length){ box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = 'flex';
+  box.innerHTML = msgs.map(m => `<div class="lf-msg"><span class="dot"></span>${esc(m.message)}</div>`).join('');
 }
 function renderIndexTicker(containerId, indices){
   const box = document.getElementById(containerId);

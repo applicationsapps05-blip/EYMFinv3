@@ -67,6 +67,7 @@ function doPost(e) {
     else if (action === 'setupReminderTrigger') result = requireAdminAction(body, setupDailyReminderTrigger);
     else if (action === 'setupFundRefreshTrigger') result = requireAdminAction(body, setupDailyFundRefreshTrigger);
     else if (action === 'getMessages') result = getMessages(body.email, body.token);
+    else if (action === 'getLoginMessages') result = getLoginMessages();
     else if (action === 'submitPurchaseRequest') result = submitPurchaseRequest(body);
     else if (action === 'uploadCas') result = uploadOwnCas(body);
     else if (action === 'flushHoldings') result = flushHoldings(body);
@@ -1034,6 +1035,28 @@ function adminDeleteMessage(body) {
     if (data[i][0] === body.id) { sheet.getRange(i + 1, 5).setValue(false); return { ok: true }; }
   }
   return { ok: false, error: 'Message not found' };
+}
+
+/** Public, no-auth: returns the active flash message(s) for the login screen, split by
+ * placement ('LOGIN_TOP' or 'LOGIN_BOTTOM'). Unlike getMessages, this is callable before
+ * anyone signs in — same trust level as getMarketIndices (read-only, no investor data). */
+function getLoginMessages() {
+  const data = getMessagesSheet().getDataRange().getValues();
+  const top = [], bottom = [], note = [];
+  for (let i = 1; i < data.length; i++) {
+    const d = data[i];
+    if (!d[0]) continue;
+    const active = d[4] === true || d[4] === 'TRUE';
+    if (!active) continue;
+    const target = (d[1] || '').toString();
+    if (target === 'LOGIN_TOP') top.push({ id: d[0], message: d[2], createdAt: d[3] });
+    else if (target === 'LOGIN_BOTTOM') bottom.push({ id: d[0], message: d[2], createdAt: d[3] });
+    else if (target === 'LOGIN_MARKET_NOTE') note.push({ id: d[0], message: d[2], createdAt: d[3] });
+  }
+  top.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  bottom.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  note.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return { ok: true, top: top, bottom: bottom, note: note.length ? note[0].message : '' };
 }
 
 /** Returns the active banner message(s) visible to a given investor: firm-wide "ALL" plus any addressed to them. */
