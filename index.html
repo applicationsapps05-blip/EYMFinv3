@@ -218,6 +218,19 @@
 .fund-result-item .fr-nav { font-family: 'IBM Plex Mono', monospace; color: rgba(28,43,57,0.6); flex-shrink: 0; }
 .fund-result-empty { padding: 10px 12px; font-size: 12px; color: rgba(28,43,57,0.5); }
 
+.nav-search-input {
+  width: 100%; font-family: inherit; font-size: 12.5px; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 4px; background: #fff; color: var(--ink);
+}
+.nav-search-input:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
+.nav-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 8px;
+  border-radius: 20px; background: rgba(28,43,57,0.06); font-size: 11px; line-height: 1.4;
+}
+.nav-chip .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.nav-chip .rm { cursor: pointer; opacity: 0.5; font-size: 14px; line-height: 1; padding: 0 2px; }
+.nav-chip .rm:hover { opacity: 1; color: var(--maroon); }
+
 table.mf-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 table.mf-table th {
   text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.4px;
@@ -1937,6 +1950,7 @@ function renderIndexTicker(containerId, indices){
 async function renderDashboard(){
   const c = document.getElementById('mfContent');
   destroyDashboardCharts();
+  navCompareState = {}; navChartInstances = {}; // fresh Dashboard load — drop any previous NAV-compare selections tied to old row indices
   let html = `<div class="mf-dashboard-top">
     <div><h2 style="margin-bottom:2px">My Portfolio Dashboard</h2><div class="mf-sub">Live performance using the latest AMFI NAV for every scheme you hold (SIPs + CAS holdings). Refreshes automatically.</div></div>
     <div id="dashIndexTicker" class="mf-index-ticker on-paper"></div>
@@ -2052,7 +2066,13 @@ function renderDashboardTable(rows, totalValue, groupBy){
             </div>
           </div>
           <div id="navChartStatus-s${i}" class="mf-sub" style="margin:0 0 6px;text-transform:none;letter-spacing:0">Loading NAV history…</div>
-          <canvas id="navChart-s${i}" style="max-height:160px"></canvas>
+          <div id="navSchemePicker-s${i}" style="position:relative;max-width:360px;margin-bottom:8px"></div>
+          <div id="navChips-s${i}" style="display:none;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
+          <canvas id="navChart-s${i}" style="max-height:180px"></canvas>
+          <div style="position:relative;max-width:340px;margin-top:10px">
+            <input id="navAddInput-s${i}" class="nav-search-input" autocomplete="off" placeholder="+ Compare with another scheme (up to 10)">
+            <div id="navAddResults-s${i}" class="fund-results"></div>
+          </div>
         </div>
       </div></td></tr>`;
     });
@@ -2130,14 +2150,19 @@ function wireDashboardTable(rows, totalValue, groupBy){
 }
 
 // ---- Per-scheme live NAV performance chart (fetched from api.mfapi.in via the Apps Script
-// backend's getNavHistory action) ----
-let navHistoryCache = {};     // schemeCode -> [{date,nav}] ascending, so switching 1M/6M/1Y/3Y/All never re-fetches
+// backend's getNavHistory action), with support for comparing up to 10 schemes on one chart ----
+let navHistoryCache = {};        // schemeCode -> [{date,nav}] ascending, so switching 1M/6M/1Y/3Y/All never re-fetches
 let schemeCodeResolveCache = {}; // lowercased fund name -> AMFI scheme code (or null if no match found)
-let navChartInstances = {};   // canvas id -> Chart instance, so a period-toggle re-render replaces cleanly
+let navChartInstances = {};      // canvas id -> Chart instance, so a period-toggle re-render replaces cleanly
+let navCompareState = {};        // drill idx (e.g. "s0") -> { schemes: [{code,name,color}], period } — reset per Dashboard load in renderDashboard()
+const NAV_COMPARE_MAX = 10;
+const NAV_COMPARE_COLORS = ['#2E6E62','#7C2E2E','#A97F1F','#1B3A54','#6B4C9A','#C2703D','#3E7CB1','#8E4585','#4A7856','#B33A5B'];
 
 // CAS-uploaded holdings don't carry an AMFI scheme code (only SIPs added via the fund search
 // box do), so for those this looks the scheme up by name against the same AMFI list the fund
-// search box uses, and remembers the answer for the rest of the session.
+// search box uses, and remembers the answer for the rest of the session. When this can't find
+// a confident match, loadSchemeNavChart() below falls back to letting the investor search and
+// pick the right scheme manually.
 async function resolveSchemeCode(row){
   if(row.schemeCode) return row.schemeCode;
   const cacheKey = (row.fundName||'').toLowerCase();
@@ -2160,38 +2185,118 @@ async function resolveSchemeCode(row){
   }
 }
 
+// Entry point, called once per drill-row when its panel is first opened. Sets up the period
+// toggle and the "+ compare" search box right away (so they work even while/if auto-matching
+// is still in progress or fails), then tries to auto-resolve this scheme; if that fails, shows
+// an AMFI search box so the investor can pick the right scheme by hand instead.
 async function loadSchemeNavChart(idx, row){
   const statusBox = document.getElementById('navChartStatus-'+idx);
   const canvas = document.getElementById('navChart-'+idx);
   if(!statusBox || !canvas) return;
-  statusBox.textContent = 'Matching this scheme against AMFI’s list…';
-  const code = await resolveSchemeCode(row);
-  if(!code){
-    statusBox.textContent = "Couldn't confidently match this scheme to AMFI's list, so live NAV history isn't available here.";
+
+  wireNavPeriodToggle(idx);
+  wireNavCompareAdd(idx);
+
+  if(navCompareState[idx]){
+    // Panel was expanded before (in this same Dashboard load) — redraw from what's already there
+    // instead of re-resolving and losing whatever the investor added to compare.
+    renderNavChips(idx);
+    renderCompareChart(idx);
     return;
   }
-  statusBox.textContent = 'Loading NAV history…';
-  try {
-    let hist = navHistoryCache[code];
-    if(!hist){
-      const res = await api('getNavHistory', { schemeCode: code });
-      hist = res.data || [];
-      navHistoryCache[code] = hist;
+  navCompareState[idx] = { schemes: [], period: '1Y' };
+  renderNavChips(idx);
+
+  statusBox.textContent = 'Matching this scheme against AMFI’s list…';
+  const code = await resolveSchemeCode(row);
+  const pickerBox = document.getElementById('navSchemePicker-'+idx);
+
+  if(!code){
+    statusBox.innerHTML = `Couldn't confidently match <strong>${esc(row.fundName)}</strong> to AMFI's list. Search for it below to pick the right scheme yourself.`;
+    if(pickerBox){
+      pickerBox.innerHTML = `<input id="navPickInput-${idx}" class="nav-search-input" autocomplete="off" placeholder="Search AMFI scheme list…">
+        <div id="navPickResults-${idx}" class="fund-results"></div>`;
+      wireFundAutocomplete('navPickInput-'+idx, 'navPickResults-'+idx, null, null, (f) => {
+        pickerBox.innerHTML = '';
+        addSchemeToCompare(idx, f.code, f.name);
+      });
     }
-    if(!hist.length){ statusBox.textContent = 'No NAV history available for this scheme yet.'; return; }
-    statusBox.textContent = '';
-    renderSchemeNavChart(canvas, hist, '1Y');
-    document.querySelectorAll(`.nav-period-toggle[data-nav-idx="${idx}"] .nav-period`).forEach(btn => {
-      btn.onclick = () => {
-        document.querySelectorAll(`.nav-period-toggle[data-nav-idx="${idx}"] .nav-period`).forEach(b => {
-          b.classList.toggle('gold', b===btn); b.classList.toggle('ghost', b!==btn);
-        });
-        renderSchemeNavChart(canvas, hist, btn.dataset.period);
-      };
-    });
-  } catch(e){
-    statusBox.textContent = 'Could not load live NAV history: ' + (e.message || 'unknown error');
+    return;
   }
+  if(pickerBox) pickerBox.innerHTML = '';
+  await addSchemeToCompare(idx, code, row.fundName);
+}
+
+function wireNavPeriodToggle(idx){
+  document.querySelectorAll(`.nav-period-toggle[data-nav-idx="${idx}"] .nav-period`).forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll(`.nav-period-toggle[data-nav-idx="${idx}"] .nav-period`).forEach(b => {
+        b.classList.toggle('gold', b===btn); b.classList.toggle('ghost', b!==btn);
+      });
+      if(navCompareState[idx]) navCompareState[idx].period = btn.dataset.period;
+      renderCompareChart(idx);
+    };
+  });
+}
+
+// The "+ Compare with another scheme" search box under the chart — lets the investor add up
+// to 10 schemes total (the auto-matched/manually-picked one plus up to 9 more) to the same chart.
+function wireNavCompareAdd(idx){
+  const inputId = 'navAddInput-'+idx;
+  wireFundAutocomplete(inputId, 'navAddResults-'+idx, null, null, (f) => {
+    addSchemeToCompare(idx, f.code, f.name);
+    const input = document.getElementById(inputId);
+    if(input) input.value = '';
+  });
+}
+
+async function addSchemeToCompare(idx, code, name){
+  const state = navCompareState[idx];
+  if(!state || !code) return;
+  if(state.schemes.some(s => s.code === code)){ renderNavChips(idx); return; } // already added
+  if(state.schemes.length >= NAV_COMPARE_MAX){ toast(`You can compare up to ${NAV_COMPARE_MAX} schemes at a time.`); return; }
+
+  const color = NAV_COMPARE_COLORS[state.schemes.length % NAV_COMPARE_COLORS.length];
+  state.schemes.push({ code, name, color });
+  renderNavChips(idx);
+
+  const statusBox = document.getElementById('navChartStatus-'+idx);
+  if(statusBox) statusBox.textContent = 'Loading NAV history…';
+  try {
+    if(!navHistoryCache[code]){
+      const res = await api('getNavHistory', { schemeCode: code });
+      if(!res.ok){ throw new Error(res.error || 'lookup failed'); }
+      navHistoryCache[code] = res.data || [];
+    }
+    if(statusBox) statusBox.textContent = '';
+  } catch(e){
+    if(statusBox) statusBox.textContent = `Could not load NAV history for ${esc(name)}: ${esc(e.message||'unknown error')}`;
+  }
+  renderCompareChart(idx);
+}
+
+function removeSchemeFromCompare(idx, code){
+  const state = navCompareState[idx];
+  if(!state) return;
+  state.schemes = state.schemes.filter(s => s.code !== code);
+  renderNavChips(idx);
+  renderCompareChart(idx);
+}
+
+// Renders the row of colored chips above the chart — one per scheme currently in the
+// comparison, each with an × to remove it. Doubles as the chart's legend/key.
+function renderNavChips(idx){
+  const box = document.getElementById('navChips-'+idx);
+  if(!box) return;
+  const schemes = (navCompareState[idx] && navCompareState[idx].schemes) || [];
+  if(schemes.length === 0){ box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = 'flex';
+  box.innerHTML = schemes.map(s =>
+    `<span class="nav-chip"><span class="dot" style="background:${s.color}"></span>${esc(s.name)}<span class="rm" data-code="${esc(s.code)}" data-idx="${esc(idx)}" title="Remove">×</span></span>`
+  ).join('') + (schemes.length >= NAV_COMPARE_MAX ? `<span class="mf-sub" style="margin:0;align-self:center">Max ${NAV_COMPARE_MAX} reached</span>` : '');
+  box.querySelectorAll('.rm').forEach(el => {
+    el.onclick = () => removeSchemeFromCompare(el.dataset.idx, el.dataset.code);
+  });
 }
 
 function sliceNavHistoryByPeriod(hist, period){
@@ -2202,16 +2307,82 @@ function sliceNavHistoryByPeriod(hist, period){
   return sliced.length >= 2 ? sliced : hist.slice(-30); // fall back rather than show an empty/1-point chart
 }
 
-function renderSchemeNavChart(canvas, hist, period){
-  const sliced = sliceNavHistoryByPeriod(hist, period);
-  const labels = sliced.map(d => d.date);
-  const data = sliced.map(d => d.nav);
-  if(navChartInstances[canvas.id]){ try{ navChartInstances[canvas.id].destroy(); }catch(e){} }
-  const up = data.length>1 ? data[data.length-1] >= data[0] : true;
+// Renders the NAV chart for whichever scheme(s) are currently selected for this drill row.
+// Each scheme's NAV is rebased to % change from the start of the selected period, since raw
+// NAV values (₹10 vs ₹1000+) aren't comparable across schemes on the same axis — this is what
+// makes multi-scheme comparison meaningful. A unified date axis (union of all schemes' dates,
+// with gaps spanned) keeps schemes with different trading calendars or inception dates aligned
+// correctly rather than lining them up by index position.
+function renderCompareChart(idx){
+  const canvas = document.getElementById('navChart-'+idx);
+  const statusBox = document.getElementById('navChartStatus-'+idx);
+  if(!canvas) return;
+  const state = navCompareState[idx];
+  const schemes = state ? state.schemes : [];
+
+  if(navChartInstances[canvas.id]){ try{ navChartInstances[canvas.id].destroy(); }catch(e){} delete navChartInstances[canvas.id]; }
+  if(schemes.length === 0){
+    const ctx = canvas.getContext('2d'); if(ctx) ctx.clearRect(0,0,canvas.width,canvas.height);
+    return;
+  }
+
+  const period = state.period || '1Y';
+  const slicedByCode = {};
+  schemes.forEach(s => { slicedByCode[s.code] = (navHistoryCache[s.code] && navHistoryCache[s.code].length) ? sliceNavHistoryByPeriod(navHistoryCache[s.code], period) : []; });
+
+  const dateSet = new Set();
+  Object.values(slicedByCode).forEach(arr => arr.forEach(d => dateSet.add(d.date)));
+  const labels = Array.from(dateSet).sort();
+  if(labels.length === 0){
+    if(statusBox) statusBox.textContent = 'No NAV history available yet for the selected scheme(s).';
+    return;
+  }
+
+  const datasets = schemes.map(s => {
+    const arr = slicedByCode[s.code] || [];
+    if(arr.length === 0) return null;
+    const byDate = {}; arr.forEach(d => { byDate[d.date] = d.nav; });
+    const base = arr[0].nav;
+    const pctByLabel = labels.map(dt => (byDate[dt] != null && base) ? ((byDate[dt]-base)/base*100) : null);
+    const rawByLabel = labels.map(dt => byDate[dt] != null ? byDate[dt] : null);
+    return { label: s.name, data: pctByLabel, borderColor: s.color, backgroundColor: s.color+'1A',
+      fill: false, spanGaps: true, tension: 0.15, pointRadius: 0, borderWidth: 1.5, _rawNav: rawByLabel };
+  }).filter(Boolean);
+
+  if(datasets.length === 0){
+    if(statusBox) statusBox.textContent = 'No NAV history available yet for the selected scheme(s).';
+    return;
+  }
+
+  // Single-scheme view keeps the original up/down-tinted fill look; multi-scheme comparison
+  // uses each scheme's own distinct color with no fill, for readability.
+  if(datasets.length === 1){
+    const vals = datasets[0].data.filter(v => v != null);
+    const up = vals.length > 1 ? vals[vals.length-1] >= vals[0] : true;
+    datasets[0].borderColor = up ? '#2E6E62' : '#7C2E2E';
+    datasets[0].backgroundColor = up ? 'rgba(46,110,98,0.10)' : 'rgba(124,46,46,0.10)';
+    datasets[0].fill = true;
+  }
+
   const chart = new Chart(canvas, {
     type: 'line',
-    data: { labels, datasets: [{ data, borderColor: up?'#2E6E62':'#7C2E2E', backgroundColor: up?'rgba(46,110,98,0.10)':'rgba(124,46,46,0.10)', fill:true, tension:0.15, pointRadius:0, borderWidth:1.5 }] },
-    options: { plugins:{ legend:{ display:false } }, scales:{ x:{ ticks:{ font:{size:8}, maxTicksLimit:6 } }, y:{ ticks:{ font:{size:9} } } } }
+    data: { labels, datasets },
+    options: {
+      plugins: {
+        legend: { display: datasets.length > 1, labels: { boxWidth: 10, font: { size: 9 } } },
+        tooltip: { callbacks: {
+          label: (ctx) => {
+            const raw = ctx.dataset._rawNav ? ctx.dataset._rawNav[ctx.dataIndex] : null;
+            const pct = ctx.parsed.y;
+            return `${ctx.dataset.label}: ${pct>=0?'+':''}${pct.toFixed(2)}%` + (raw!=null ? ` (₹${Number(raw).toFixed(2)})` : '');
+          }
+        } }
+      },
+      scales: {
+        x: { ticks: { font:{size:8}, maxTicksLimit:6 } },
+        y: { ticks: { font:{size:9}, callback:(v)=>v+'%' } }
+      }
+    }
   });
   navChartInstances[canvas.id] = chart;
   dashboardChartInstances.push(chart); // so navigating away destroys this too via destroyDashboardCharts()
@@ -2588,7 +2759,7 @@ function esc(s){ return (s||'').toString().replace(/[&<>"']/g, c => ({'&':'&amp;
 
 // Reusable AMFI fund-name autocomplete, wired to any text input + results box.
 // navFieldId (optional) auto-fills a NAV field when a result is picked.
-function wireFundAutocomplete(inputId, resultsId, navFieldId, codeFieldId){
+function wireFundAutocomplete(inputId, resultsId, navFieldId, codeFieldId, onSelect){
   const fundInput = document.getElementById(inputId);
   const resultsBox = document.getElementById(resultsId);
   if(!fundInput || !resultsBox) return;
@@ -2618,6 +2789,7 @@ function wireFundAutocomplete(inputId, resultsId, navFieldId, codeFieldId){
               if(navFieldId && item.dataset.nav){ const navEl = document.getElementById(navFieldId); if(navEl) navEl.value = item.dataset.nav; }
               if(codeFieldId){ const codeEl = document.getElementById(codeFieldId); if(codeEl) codeEl.value = item.dataset.code || ''; }
               resultsBox.classList.remove('show'); resultsBox.innerHTML='';
+              if(onSelect) onSelect({ name: item.dataset.name, nav: item.dataset.nav, code: item.dataset.code });
             };
           });
         }
