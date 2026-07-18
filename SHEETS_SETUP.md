@@ -1,6 +1,28 @@
 # Folio & Compass — Google Sheets Backend Setup
 
-## What changed in this version (v13)
+## What changed in this version (v14)
+- **New CAS format supported:** the PDF importer (Admin Console and each investor's own
+  "Update my portfolio from a CAS statement") now also reads MF Central's newer
+  **"Consolidated Account Summary"** layout (filename usually starts `cas_summary_report_…`),
+  which lists Folio No./Demat Client Id, Scheme Details, Invested Value, Balance Units, NAV
+  Date, NAV, Market Value and Gain/Loss — no ISIN or registrar name per row, unlike the
+  CAMS/KFintech detailed statement the importer already handled. It's tried automatically as
+  a fallback whenever the original format doesn't match, so nothing needs to be configured —
+  just upload the PDF. Both SoA and Demat holdings pages are read; zero-balance/zero-value
+  schemes (funds fully redeemed in the past but still listed) are skipped automatically.
+- **New: live NAV Performance chart per scheme.** On the Dashboard, expanding any scheme's
+  row (Drill down by "Scheme") now shows a second chart below the Invested-vs-Current one: an
+  actual NAV history line chart for that fund, fetched live from the free public
+  **api.mfapi.in** historical-NAV API (proxied through the Apps Script backend, same as the
+  SIP NAV-history simulation already used), with 1M/6M/1Y/3Y/All period toggles. For CAS-
+  uploaded holdings (which don't carry an AMFI scheme code the way a SIP added via the fund
+  search box does), the scheme is first matched by name against AMFI's fund list — if no
+  confident match is found, the chart area explains that instead of showing nothing.
+- Because of the above, this version adds one new backend action (`getNavHistory`) — **you
+  must redeploy** (see "Updating the script later" below) for it to work; otherwise you'll
+  see "Unknown action" if the NAV chart tries to load.
+
+## What changed in v13
 - **Speed:** the Dashboard used to make one backend call *per SIP* just to open — an
   investor with 6 SIPs paid for 6 network round-trips. It's now one batched call
   (`computeSipAccumulationBatch`). Separately, the AMFI fund list used to occasionally force

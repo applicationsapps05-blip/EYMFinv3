@@ -42,7 +42,7 @@
 // always confirm the deployed Web App is actually running what you just pasted — "Unknown
 // action" errors almost always mean you edited Code.gs but didn't create a NEW deployment
 // version (Deploy > Manage deployments > pencil icon > Version: New version > Deploy).
-const SCRIPT_VERSION = 'v13.1-2026-07-15-user-management';
+const SCRIPT_VERSION = 'v14-2026-07-18-navhistory-cas-v2';
 
 function doPost(e) {
   let result;
@@ -62,6 +62,7 @@ function doPost(e) {
     else if (action === 'lookupNavs') result = lookupNavs(body.names || []);
     else if (action === 'computeSipAccumulation') result = computeSipAccumulation(body);
     else if (action === 'computeSipAccumulationBatch') result = computeSipAccumulationBatch(body);
+    else if (action === 'getNavHistory') result = getNavHistory(body);
     else if (action === 'getNews') result = getNews();
     else if (action === 'getMarketIndices') result = getMarketIndices();
     else if (action === 'setupReminderTrigger') result = requireAdminAction(body, setupDailyReminderTrigger);
@@ -307,6 +308,50 @@ function parseMfapiDate_(str) {
   const m = /^(\d{2})-(\d{2})-(\d{4})$/.exec(str || '');
   if (!m) return null;
   return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+}
+
+// Full historical NAV series for one scheme, for the Dashboard's per-scheme "NAV Performance"
+// chart. Proxied server-side (same reason as everything else that talks to mfapi.in/AMFI in
+// this file) so it works from any investor's browser without a CORS round-trip depending on
+// mfapi.in's own headers. No login required — NAV history isn't personal data — matching
+// getMarketIndices below.
+function getNavHistory(body) {
+  const schemeCode = String(body.schemeCode || '').trim();
+  if (!schemeCode) return { ok: false, error: 'schemeCode is required' };
+
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'navhist_' + schemeCode;
+  const cached = cache.get(cacheKey);
+  if (cached) return JSON.parse(cached);
+
+  let raw;
+  try {
+    const res = UrlFetchApp.fetch('https://api.mfapi.in/mf/' + encodeURIComponent(schemeCode), { muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200) return { ok: false, error: 'Historical NAV service unavailable (HTTP ' + res.getResponseCode() + ')' };
+    raw = JSON.parse(res.getContentText());
+  } catch (e) {
+    return { ok: false, error: 'Could not reach historical NAV service: ' + e.message };
+  }
+
+  const parsed = (raw.data || [])
+    .map(d => ({ date: parseMfapiDate_(d.date), nav: Number(d.nav) }))
+    .filter(d => d.date && !isNaN(d.nav))
+    .sort((a, b) => a.date - b.date); // mfapi.in returns newest-first; the chart wants ascending
+  if (parsed.length === 0) return { ok: false, error: 'No historical NAV data found for this scheme' };
+
+  // Cap to the most recent ~1100 trading days (a little over 4 years) so the cached JSON
+  // comfortably fits CacheService's 100KB-per-value limit while still covering every period
+  // the Dashboard's chart offers (1M/6M/1Y/3Y/All-since-cap).
+  const capped = parsed.length > 1100 ? parsed.slice(parsed.length - 1100) : parsed;
+  const tz = Session.getScriptTimeZone() || 'Etc/UTC';
+  const out = {
+    ok: true,
+    schemeCode: schemeCode,
+    schemeName: (raw.meta && raw.meta.scheme_name) || '',
+    data: capped.map(d => ({ date: Utilities.formatDate(d.date, tz, 'yyyy-MM-dd'), nav: d.nav }))
+  };
+  try { cache.put(cacheKey, JSON.stringify(out), 900); } catch (e) { /* payload too large to cache — fine, just skip caching */ }
+  return out;
 }
 
 // IMPORTANT (perf): this used to also return true once the list was >24h old, which meant

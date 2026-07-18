@@ -1102,6 +1102,89 @@ function parseCasBlocks(lines){
   return holdings;
 }
 
+// ---- CAS PDF parsing: format v2 ("Consolidated Account Summary" — MF Central's newer
+// generator, e.g. mfcentral.com's own "cas_summary_report" download). This layout has no
+// ISIN or registrar name printed per row at all — just Folio No./Client Id, Scheme Details,
+// Invested Value, Balance Units, NAV Date, NAV, Market Value and Gain/Loss, each in a fixed
+// x-position column — so the ISIN-anchored CAS_ROW_RE above never matches it, however the
+// tolerance is tuned. Rather than a text regex, this reconstructs each row directly from
+// item positions: every row starts with a Folio No. / Demat Client Id token in the leftmost
+// column, and everything else belonging to that row — including a scheme name that wraps
+// onto a second line, and the split "amount" / "(+/-%)" halves of the Gain/Loss cell — lands
+// a handful of points above or below that anchor's own y. Using the midpoint between
+// consecutive anchors as each row's vertical boundary (instead of a fixed tolerance) reliably
+// scoops all of that up regardless of how many sub-lines a given row happens to be split
+// across.
+const CASV2_COLS = [
+  ['id',          0,   95],
+  ['scheme',      95,  320],
+  ['invested',    320, 430],
+  ['units',       430, 505],
+  ['navdate',     505, 585],
+  ['nav',         585, 650],
+  ['marketvalue', 650, 745],
+  ['gainloss',    745, Infinity]
+];
+const CASV2_ID_RE = /^\d[\d\-]*\d$|^\d$/; // "10000542", or a demat "12081600-35631606"
+const CASV2_NUM_RE = /^[\d,]+\.\d+$/;
+
+function casv2ColOf(x){
+  const hit = CASV2_COLS.find(([,lo,hi]) => x >= lo && x < hi);
+  return hit ? hit[0] : null;
+}
+function casv2Num(str){ return Number(String(str||'').replace(/[,()]/g,'').trim()) || 0; }
+
+function extractCasV2Holdings(pages){
+  const holdings = [];
+  pages.forEach(items => {
+    // Row anchors: items in the leftmost column that look like a folio number or demat client id.
+    const anchors = items
+      .filter(it => casv2ColOf(it.x) === 'id' && CASV2_ID_RE.test(it.str.trim()))
+      .sort((a,b) => b.y - a.y); // PDF y grows upward, so descending y = top-to-bottom reading order
+    if(!anchors.length) return;
+
+    // Cap how far a row's band can reach past its own anchor (rather than always using the
+    // raw midpoint to the neighbouring anchor) — the first row on a page has no "previous"
+    // anchor above it, so an uncapped midpoint would reach all the way up into the page's
+    // title/column-header text; likewise the last row would reach down into the page footer.
+    // 20pt comfortably covers a genuinely wrapped scheme name or a split Gain/Loss amount/%
+    // (observed ~5-18pt from the anchor) while excluding header/footer text (40pt+ away).
+    const ROW_BAND_CAP = 20;
+    anchors.forEach((anchor, i) => {
+      const prevY = i > 0 ? anchors[i-1].y : Infinity;
+      const nextY = i < anchors.length-1 ? anchors[i+1].y : -Infinity;
+      const top = Math.min((anchor.y + prevY) / 2, anchor.y + ROW_BAND_CAP);
+      const bottom = Math.max((anchor.y + nextY) / 2, anchor.y - ROW_BAND_CAP);
+      const rowItems = items.filter(it => it.y <= top && it.y > bottom);
+
+      const byCol = {};
+      rowItems.forEach(it => {
+        const col = casv2ColOf(it.x);
+        if(col) (byCol[col] = byCol[col] || []).push(it);
+      });
+      const joinCol = (col) => (byCol[col]||[]).slice()
+        .sort((a,b) => (b.y - a.y) || (a.x - b.x))
+        .map(it => it.str).join(' ').replace(/\s+/g,' ').trim();
+      const firstNum = (col) => casv2Num((byCol[col]||[]).map(it=>it.str).find(s => CASV2_NUM_RE.test(s.trim())));
+
+      const fundName = joinCol('scheme');
+      const investedValue = firstNum('invested');
+      const units = firstNum('units');
+      const nav = firstNum('nav');
+      const marketValue = firstNum('marketvalue');
+      // Skip blank/zero-balance rows (this statement lists every scheme ever held, including
+      // long-redeemed ones with nothing left in them) — not real holdings to import.
+      if(!fundName || (investedValue === 0 && units === 0 && marketValue === 0)) return;
+
+      holdings.push({
+        folio: anchor.str.trim(), fundName, schemeType: guessSchemeType(fundName),
+        units, nav, investedValue, marketValue
+      });
+    });
+  });
+  return holdings;
+}
+
 async function extractCasHoldings(file, password){
   const pages = await extractPdfItemsByPage(file, password);
   let best = { holdings: [], lines: [] };
@@ -1128,6 +1211,18 @@ async function extractCasHoldings(file, password){
     pages.forEach(items => { blob += ' ' + clusterItemsToLines(items, 4).join(' '); });
     const holdings = parseCasBlob(blob);
     if(holdings.length > 0) best = { holdings, lines: best.lines };
+  }
+
+  // Pass 3: the column-position parser for the ISIN-less "Consolidated Account Summary"
+  // layout (see extractCasV2Holdings above) — only reached if passes 1-2 found nothing,
+  // so this can't change behaviour for the statement layout the app already supported.
+  if(best.holdings.length === 0){
+    const v2Holdings = extractCasV2Holdings(pages);
+    if(v2Holdings.length > 0){
+      let allLines = [];
+      pages.forEach(items => { allLines = allLines.concat(clusterItemsToLines(items, 4)); });
+      best = { holdings: v2Holdings, lines: allLines };
+    }
   }
 
   return best; // { holdings, lines } — lines kept for on-screen diagnostics if holdings is empty
@@ -1675,6 +1770,7 @@ function groupDashboardRows(rows, level){
 function destroyDashboardCharts(){
   dashboardChartInstances.forEach(ch => { try{ ch.destroy(); }catch(e){} });
   dashboardChartInstances = [];
+  navChartInstances = {};
 }
 
 const CHART_COLORS = ['#7C2E2E','#2E6E62','#A97F1F','#1B3A54','#B8622F','#5D8A5A','#10263A','#9C6644'];
@@ -1948,6 +2044,16 @@ function renderDashboardTable(rows, totalValue, groupBy){
           <div style="flex:1;min-width:140px"><div class="mf-sub" style="margin:0">Current Value</div><div class="num" style="font-size:16px">₹${Math.round(r.currentValue).toLocaleString('en-IN')}</div></div>
         </div>
         <canvas id="drillChart-s${i}" style="max-height:160px"></canvas>
+        <div style="margin-top:16px">
+          <div class="mf-row" style="align-items:center;justify-content:space-between;margin-bottom:6px;gap:8px">
+            <h3 style="font-family:'Fraunces',serif;font-size:13px;margin:0">NAV Performance <span class="mf-sub" style="margin:0;text-transform:none;letter-spacing:0">(live history, via AMFI/mfapi.in)</span></h3>
+            <div class="nav-period-toggle" data-nav-idx="s${i}" style="display:flex;gap:4px">
+              ${['1M','6M','1Y','3Y','ALL'].map(p => `<button class="mf-btn ${p==='1Y'?'gold':'ghost'} sm nav-period" data-period="${p}" style="padding:4px 9px;font-size:10.5px">${p==='ALL'?'All':p}</button>`).join('')}
+            </div>
+          </div>
+          <div id="navChartStatus-s${i}" class="mf-sub" style="margin:0 0 6px;text-transform:none;letter-spacing:0">Loading NAV history…</div>
+          <canvas id="navChart-s${i}" style="max-height:160px"></canvas>
+        </div>
       </div></td></tr>`;
     });
     html += `</tbody></table></div>`;
@@ -2012,9 +2118,103 @@ function wireDashboardTable(rows, totalValue, groupBy){
             options:{ plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true, ticks:{font:{size:10}}}, x:{ticks:{font:{size:10}}}} } });
           dashboardChartInstances.push(chart);
         }
+        // Live NAV-history line chart — only meaningful for a single scheme, not an
+        // AMC/Category/Region group (which can span many different schemes at once).
+        if(groupBy === 'scheme'){
+          const n = Number(idx.slice(1));
+          loadSchemeNavChart(idx, rows[n]);
+        }
       }
     };
   });
+}
+
+// ---- Per-scheme live NAV performance chart (fetched from api.mfapi.in via the Apps Script
+// backend's getNavHistory action) ----
+let navHistoryCache = {};     // schemeCode -> [{date,nav}] ascending, so switching 1M/6M/1Y/3Y/All never re-fetches
+let schemeCodeResolveCache = {}; // lowercased fund name -> AMFI scheme code (or null if no match found)
+let navChartInstances = {};   // canvas id -> Chart instance, so a period-toggle re-render replaces cleanly
+
+// CAS-uploaded holdings don't carry an AMFI scheme code (only SIPs added via the fund search
+// box do), so for those this looks the scheme up by name against the same AMFI list the fund
+// search box uses, and remembers the answer for the rest of the session.
+async function resolveSchemeCode(row){
+  if(row.schemeCode) return row.schemeCode;
+  const cacheKey = (row.fundName||'').toLowerCase();
+  if(!cacheKey) return null;
+  if(cacheKey in schemeCodeResolveCache) return schemeCodeResolveCache[cacheKey];
+  try {
+    const res = await api('searchFunds', { query: row.fundName.slice(0, 60) });
+    const funds = res.funds || [];
+    const lname = cacheKey;
+    const wantsDirect = /direct/i.test(lname), wantsGrowth = /growth/i.test(lname);
+    const pick = funds.find(f => f.name.toLowerCase() === lname)
+      || funds.find(f => (!wantsDirect || /direct/i.test(f.name)) && (!wantsGrowth || /growth/i.test(f.name)))
+      || funds[0] || null;
+    const code = pick ? pick.code : null;
+    schemeCodeResolveCache[cacheKey] = code;
+    return code;
+  } catch(e){
+    schemeCodeResolveCache[cacheKey] = null;
+    return null;
+  }
+}
+
+async function loadSchemeNavChart(idx, row){
+  const statusBox = document.getElementById('navChartStatus-'+idx);
+  const canvas = document.getElementById('navChart-'+idx);
+  if(!statusBox || !canvas) return;
+  statusBox.textContent = 'Matching this scheme against AMFI’s list…';
+  const code = await resolveSchemeCode(row);
+  if(!code){
+    statusBox.textContent = "Couldn't confidently match this scheme to AMFI's list, so live NAV history isn't available here.";
+    return;
+  }
+  statusBox.textContent = 'Loading NAV history…';
+  try {
+    let hist = navHistoryCache[code];
+    if(!hist){
+      const res = await api('getNavHistory', { schemeCode: code });
+      hist = res.data || [];
+      navHistoryCache[code] = hist;
+    }
+    if(!hist.length){ statusBox.textContent = 'No NAV history available for this scheme yet.'; return; }
+    statusBox.textContent = '';
+    renderSchemeNavChart(canvas, hist, '1Y');
+    document.querySelectorAll(`.nav-period-toggle[data-nav-idx="${idx}"] .nav-period`).forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll(`.nav-period-toggle[data-nav-idx="${idx}"] .nav-period`).forEach(b => {
+          b.classList.toggle('gold', b===btn); b.classList.toggle('ghost', b!==btn);
+        });
+        renderSchemeNavChart(canvas, hist, btn.dataset.period);
+      };
+    });
+  } catch(e){
+    statusBox.textContent = 'Could not load live NAV history: ' + (e.message || 'unknown error');
+  }
+}
+
+function sliceNavHistoryByPeriod(hist, period){
+  if(period === 'ALL') return hist;
+  const daysBack = { '1M':31, '6M':186, '1Y':366, '3Y':1097 }[period] || 366;
+  const cutoff = Date.now() - daysBack*24*3600*1000;
+  const sliced = hist.filter(d => new Date(d.date).getTime() >= cutoff);
+  return sliced.length >= 2 ? sliced : hist.slice(-30); // fall back rather than show an empty/1-point chart
+}
+
+function renderSchemeNavChart(canvas, hist, period){
+  const sliced = sliceNavHistoryByPeriod(hist, period);
+  const labels = sliced.map(d => d.date);
+  const data = sliced.map(d => d.nav);
+  if(navChartInstances[canvas.id]){ try{ navChartInstances[canvas.id].destroy(); }catch(e){} }
+  const up = data.length>1 ? data[data.length-1] >= data[0] : true;
+  const chart = new Chart(canvas, {
+    type: 'line',
+    data: { labels, datasets: [{ data, borderColor: up?'#2E6E62':'#7C2E2E', backgroundColor: up?'rgba(46,110,98,0.10)':'rgba(124,46,46,0.10)', fill:true, tension:0.15, pointRadius:0, borderWidth:1.5 }] },
+    options: { plugins:{ legend:{ display:false } }, scales:{ x:{ ticks:{ font:{size:8}, maxTicksLimit:6 } }, y:{ ticks:{ font:{size:9} } } } }
+  });
+  navChartInstances[canvas.id] = chart;
+  dashboardChartInstances.push(chart); // so navigating away destroys this too via destroyDashboardCharts()
 }
 
 function renderRisk(){
